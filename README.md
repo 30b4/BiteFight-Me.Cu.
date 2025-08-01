@@ -70,4 +70,10 @@ Ein mächtiges Browser-Addon für BiteFight.gameforge.com, das das Spielmenü mi
 
 2. **Script installieren**
 
+![manage Standard menu]({66A931F5-DC81-4443-808F-8213FFC43735}.png)
+![manage Custom menu]({19630596-AA9E-4B09-B685-3E019413EC75}.png)
+![sort your menu]({8F305554-95CB-453D-8821-53D5CF31CC16}.png)
+![Advanced Settings]({30FE3ED9-1B55-4632-9EF3-914A32253ED7}.png)
+![Information]({A2FB512A-5558-4BF6-9DA7-DE7F407AAC0B}.png)
+
 [30b4.de](https://www.30b4.de/)
