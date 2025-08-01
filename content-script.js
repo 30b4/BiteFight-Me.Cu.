@@ -1,307 +1,401 @@
 (function() {
-    'use strict';
-    
-    // ===== KONSTANTEN UND GLOBALE VARIABLEN =====
-    const STORAGE_KEY = 'bitefightMenuSettings';
-    const OVERLAY_SEEN_KEY = 'bitefightOverlaySeen';
-    const UI_VISIBLE_KEY = 'bitefightMenuVisible';
-    const CUSTOM_BUTTONS_KEY = 'bitefightCustomButtons';
-    const MENU_ORDER_KEY = 'bitefightMenuOrder';
-    const CUSTOM_ORDER_KEY = 'bitefightCustomOrder';
-    const LANGUAGE_KEY = 'bitefightLanguage';
-    const ADVANCED_SETTINGS_KEY = 'bitefightAdvancedSettings';
-    
-    let buttonsInserted = false;
-    let uiContainer = null;
-    let settingsWindow = null;
-    let activeTab = 2;
-    let overlay = null;
-    let customMenuContainer = null;
-    let menuSettings = {};
-    let customButtons = [];
-    let menuOrder = [];
-    let customOrder = [];
-    let currentLanguage = 'de'; // Standard: Deutsch
-    let advancedSettings = {};
-    let pageLoadStartTime = Date.now();
+
+  'use strict';
   
-    // ===== MEHRSPRACHIGE ÜBERSETZUNGEN =====
-    const translations = {
+  // ===== KONSTANTEN UND GLOBALE VARIABLEN =====
+  
+  const STORAGE_KEY = 'bitefightMenuSettings';
+  const OVERLAY_SEEN_KEY = 'bitefightOverlaySeen';
+  const UI_VISIBLE_KEY = 'bitefightMenuVisible';
+  const CUSTOM_BUTTONS_KEY = 'bitefightCustomButtons';
+  const MENU_ORDER_KEY = 'bitefightMenuOrder';
+  const CUSTOM_ORDER_KEY = 'bitefightCustomOrder';
+  const LANGUAGE_KEY = 'bitefightLanguage';
+  const ADVANCED_SETTINGS_KEY = 'bitefightAdvancedSettings';
+  
+  let buttonsInserted = false;
+  let uiContainer = null;
+  let settingsWindow = null;
+  let activeTab = 2;
+  let overlay = null;
+  let customMenuContainer = null;
+  let menuSettings = {};
+  let customButtons = [];
+  let menuOrder = [];
+  let customOrder = [];
+  let currentLanguage = 'de';
+  let advancedSettings = {};
+  let pageLoadStartTime = Date.now();
+  
+  // ===== MODAL OBSERVER - LÖSUNG FÜR VERSCHWINDENDE BUTTONS =====
+  
+  let domObserver = null;
+  let modalObserver = null;
+  
+  function initModalObserver() {
+      domObserver = new MutationObserver(function(mutations) {
+          let modalDetected = false;
+          let modalRemoved = false;
+          
+          mutations.forEach(function(mutation) {
+              mutation.addedNodes.forEach(function(node) {
+                  if (node.nodeType === 1) {
+                      if (node.id === 'confirmModal' || 
+                          node.classList?.contains('modal') ||
+                          node.classList?.contains('confirmModal') ||
+                          node.querySelector?.('#confirmModal, .modal, .confirmModal')) {
+                          modalDetected = true;
+                          console.log('[BiteFight] Modal detected - will restore custom buttons');
+                      }
+                  }
+              });
+              
+              mutation.removedNodes.forEach(function(node) {
+                  if (node.nodeType === 1) {
+                      if (node.id === 'confirmModal' || 
+                          node.classList?.contains('modal') ||
+                          node.classList?.contains('confirmModal')) {
+                          modalRemoved = true;
+                          console.log('[BiteFight] Modal removed - will restore custom buttons');
+                      }
+                  }
+              });
+          });
+          
+          if (modalDetected || modalRemoved) {
+              setTimeout(function() {
+                  restoreCustomButtonsIfNeeded();
+              }, 100);
+          }
+      });
+      
+      if (document.body) {
+          domObserver.observe(document.body, {
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ['style', 'class']
+          });
+          console.log('[BiteFight] Modal observer initialized');
+      }
+  }
+  
+  function restoreCustomButtonsIfNeeded() {
+      const menu = document.querySelector('#menuHead');
+      if (!menu) return;
+      
+      const existingCustomButtons = menu.querySelectorAll('.custom-menu-item');
+      const expectedButtonCount = customButtons.filter(btn => btn.enabled !== false).length;
+      
+      if (existingCustomButtons.length < expectedButtonCount) {
+          console.log('[BiteFight] Custom buttons missing, restoring...');
+          existingCustomButtons.forEach(btn => btn.remove());
+          applySortedCustomButtons(menu);
+      }
+  }
+  
+  function initMenuObserver() {
+      const menu = document.querySelector('#menuHead');
+      if (!menu) return;
+      
+      modalObserver = new MutationObserver(function(mutations) {
+          let customButtonsRemoved = false;
+          
+          mutations.forEach(function(mutation) {
+              mutation.removedNodes.forEach(function(node) {
+                  if (node.nodeType === 1 && node.classList?.contains('custom-menu-item')) {
+                      customButtonsRemoved = true;
+                  }
+              });
+          });
+          
+          if (customButtonsRemoved) {
+              console.log('[BiteFight] Custom buttons removed from menu - will restore');
+              setTimeout(function() {
+                  restoreCustomButtonsIfNeeded();
+              }, 50);
+          }
+      });
+      
+      modalObserver.observe(menu, {
+          childList: true,
+          subtree: true
+      });
+      console.log('[BiteFight] Menu observer initialized');
+  }
+  
+  // ===== MEHRSPRACHIGE ÜBERSETZUNGEN =====
+  
+  const translations = {
       de: {
-        // UI Hauptelemente
-        title: 'BiteFight-Me.Cu.',
-        pressF2: 'Drücke F2',
-        
-        // Tabs
-        tabToggle: 'Ein/Aus',
-        tabCustom: 'Custom',
-        tabSorting: 'Sortierung',
-        
-        // Tab 1: Ein/Aus
-        allOn: 'Alle an',
-        allOff: 'Alle aus',
-        
-        // Tab 2: Custom Buttons
-        addNewButton: 'Neuen Button hinzufügen',
-        buttonName: 'Button Name',
-        buttonUrl: 'URL (https://...)',
-        openInNewTab: 'In neuem Tab öffnen',
-        addButton: 'Button hinzufügen',
-        manageExistingButtons: 'Bestehende Buttons verwalten',
-        noButtonsAvailable: 'Keine Buttons vorhanden',
-        newTab: 'Neuer Tab',
-        sameTab: 'Gleicher Tab',
-        editButton: 'Button bearbeiten',
-        deleteButton: 'Button löschen',
-        confirmDelete: 'Button "{0}" löschen?',
-        pleaseEnterNameAndUrl: 'Bitte Name und URL eingeben!',
-        
-        // Tab 3: Sortierung
-        menuSorting: 'Menü-Sortierung',
-        sortingDescription: 'Sortiere Standard-Menüpunkte und Custom Buttons separat.',
-        autoSaveNote: '<strong>Automatisches Speichern:</strong> Änderungen werden automatisch gespeichert und die Seite wird neu geladen.',
-        upArrow: '↑ = Nach oben',
-        downArrow: '↓ = Nach unten',
-        standardReset: 'Standard Reset',
-        customReset: 'Custom Reset',
-        sortStandardMenuItems: 'Standard-Menüpunkte sortieren',
-        sortCustomButtons: 'Custom Buttons sortieren',
-        noCustomButtonsAvailable: 'Keine Custom Buttons vorhanden',
-        standard: '[Standard]',
-        custom: '[Custom]',
-        confirmStandardReset: 'Standard-Reihenfolge wiederherstellen?',
-        confirmCustomReset: 'Custom-Reihenfolge wiederherstellen?',
-        
-        // Edit Dialog
-        editButtonTitle: 'Button bearbeiten',
-        buttonNameLabel: 'Button Name:',
-        urlLabel: 'URL:',
-        save: 'Speichern',
-        cancel: 'Abbrechen',
-        
-        // Settings Window
-        advancedSettings: 'Erweiterte Einstellungen',
-        gameElementsSettings: 'Spiel-Elemente Konfiguration',
-        showEventNotifications: 'Event-Benachrichtigungen anzeigen',
-        showShadowlordNotifications: 'Schattenfürst-Benachrichtigungen anzeigen',
-        showGameForgeTaskbar: 'GameForge-Taskbar anzeigen',
-        eventNotificationsDesc: 'Zeigt Event-Nachrichten und Ankündigungen im Spiel an',
-        shadowlordNotificationsDesc: 'Zeigt Schattenfürst-bezogene Benachrichtigungen an',
-        gameForgeTaskbarDesc: 'Zeigt die GameForge-Taskbar am oberen Bildschirmrand an',
-        close: 'Schließen',
-        resetToDefaults: 'Auf Standard zurücksetzen',
-        confirmResetDefaults: 'Alle erweiterten Einstellungen auf Standard zurücksetzen?',
-        
-        // Notifications
-        changesSaved: 'Änderungen gespeichert!',
-        menuOrderSaved: 'Menü-Reihenfolge gespeichert!',
-        customButtonOrderSaved: 'Custom-Button-Reihenfolge gespeichert!',
-        customButtonsSaved: 'Custom Buttons gespeichert!',
-        menuSettingsSaved: 'Menü-Einstellungen gespeichert!',
-        standardOrderReset: 'Standard-Reihenfolge zurückgesetzt!',
-        customOrderReset: 'Custom-Reihenfolge zurückgesetzt!',
-        languageChanged: 'Sprache geändert!',
-        advancedSettingsSaved: 'Erweiterte Einstellungen gespeichert!',
-        settingsReset: 'Einstellungen zurückgesetzt!'
+          title: 'BiteFight-Me.Cu.',
+          pressF2: 'Drücke F2',
+          tabToggle: 'Standard',
+          tabCustom: 'Custom',
+          tabSorting: 'Sortierung',
+          allOn: 'Alle an',
+          allOff: 'Alle aus',
+          addNewButton: 'Neuen Button hinzufügen',
+          buttonName: 'Button Name',
+          buttonUrl: '/city/grotte/ oder URL (https://...)',
+          openInNewTab: 'In neuem Tab öffnen',
+          addButton: 'Button hinzufügen',
+          manageExistingButtons: 'Bestehende Buttons verwalten',
+          noButtonsAvailable: 'Keine Buttons vorhanden',
+          newTab: 'Neuer Tab',
+          sameTab: 'Gleicher Tab',
+          editButton: 'Button bearbeiten',
+          deleteButton: 'Button löschen',
+          confirmDelete: 'Button "{0}" löschen?',
+          pleaseEnterNameAndUrl: 'Bitte Name und URL eingeben!',
+          menuSorting: 'Menü-Sortierung',
+          sortingDescription: 'Sortiere Standard-Menüpunkte und Custom Buttons separat.',
+          autoSaveNote: '**Automatisches Speichern:** Änderungen werden automatisch gespeichert und die Seite wird neu geladen.',
+          upArrow: '↑ = Nach oben',
+          downArrow: '↓ = Nach unten',
+          standardReset: 'Standard Reset',
+          customReset: 'Custom Reset',
+          sortStandardMenuItems: 'Standard-Menüpunkte sortieren',
+          sortCustomButtons: 'Custom Buttons sortieren',
+          noCustomButtonsAvailable: 'Keine Custom Buttons vorhanden',
+          standard: '[Standard]',
+          custom: '[Custom]',
+          confirmStandardReset: 'Standard-Reihenfolge wiederherstellen?',
+          confirmCustomReset: 'Custom-Reihenfolge wiederherstellen?',
+          editButtonTitle: 'Button bearbeiten',
+          buttonNameLabel: 'Button Name:',
+          urlLabel: 'URL:',
+          save: 'Speichern',
+          cancel: 'Abbrechen',
+          advancedSettings: 'Erweiterte Einstellungen',
+          gameElementsSettings: 'Spiel-Elemente Konfiguration',
+          showEventNotifications: 'Event-Benachrichtigungen anzeigen',
+          showShadowlordNotifications: 'Schattenfürst-Benachrichtigungen anzeigen',
+          showGameForgeTaskbar: 'GameForge-Taskbar anzeigen',
+          eventNotificationsDesc: 'Zeigt Event-Nachrichten und Ankündigungen im Spiel an',
+          shadowlordNotificationsDesc: 'Zeigt Schattenfürst-bezogene Benachrichtigungen an',
+          gameForgeTaskbarDesc: 'Zeigt die GameForge-Taskbar am oberen Bildschirmrand an',
+          close: 'Schließen',
+          resetToDefaults: 'Auf Standard zurücksetzen',
+          confirmResetDefaults: 'Alle erweiterten Einstellungen auf Standard zurücksetzen?',
+          changesSaved: 'Änderungen gespeichert!',
+          menuOrderSaved: 'Menü-Reihenfolge gespeichert!',
+          customButtonOrderSaved: 'Custom-Button-Reihenfolge gespeichert!',
+          customButtonsSaved: 'Custom Buttons gespeichert!',
+          toggleCustomButtons: 'Custom Buttons Ein/Aus',
+          menuSettingsSaved: 'Menü-Einstellungen gespeichert!',
+          standardOrderReset: 'Standard-Reihenfolge zurückgesetzt!',
+          customOrderReset: 'Custom-Reihenfolge zurückgesetzt!',
+          languageChanged: 'Sprache geändert!',
+          advancedSettingsSaved: 'Erweiterte Einstellungen gespeichert!',
+          settingsReset: 'Einstellungen zurückgesetzt!',
+          information: 'Information'
       },
       en: {
-        // UI Main Elements
-        title: 'BiteFight-Me.Cu.',
-        pressF2: 'Press F2',
-        
-        // Tabs
-        tabToggle: 'Toggle',
-        tabCustom: 'Custom',
-        tabSorting: 'Sorting',
-        
-        // Tab 1: Toggle
-        allOn: 'All On',
-        allOff: 'All Off',
-        
-        // Tab 2: Custom Buttons
-        addNewButton: 'Add New Button',
-        buttonName: 'Button Name',
-        buttonUrl: 'URL (https://...)',
-        openInNewTab: 'Open in new tab',
-        addButton: 'Add Button',
-        manageExistingButtons: 'Manage Existing Buttons',
-        noButtonsAvailable: 'No buttons available',
-        newTab: 'New Tab',
-        sameTab: 'Same Tab',
-        editButton: 'Edit Button',
-        deleteButton: 'Delete Button',
-        confirmDelete: 'Delete button "{0}"?',
-        pleaseEnterNameAndUrl: 'Please enter name and URL!',
-        
-        // Tab 3: Sorting
-        menuSorting: 'Menu Sorting',
-        sortingDescription: 'Sort standard menu items and custom buttons separately.',
-        autoSaveNote: '<strong>Auto-Save:</strong> Changes are automatically saved and the page will reload.',
-        upArrow: '↑ = Move up',
-        downArrow: '↓ = Move down',
-        standardReset: 'Standard Reset',
-        customReset: 'Custom Reset',
-        sortStandardMenuItems: 'Sort Standard Menu Items',
-        sortCustomButtons: 'Sort Custom Buttons',
-        noCustomButtonsAvailable: 'No custom buttons available',
-        standard: '[Standard]',
-        custom: '[Custom]',
-        confirmStandardReset: 'Restore standard order?',
-        confirmCustomReset: 'Restore custom order?',
-        
-        // Edit Dialog
-        editButtonTitle: 'Edit Button',
-        buttonNameLabel: 'Button Name:',
-        urlLabel: 'URL:',
-        save: 'Save',
-        cancel: 'Cancel',
-        
-        // Settings Window
-        advancedSettings: 'Advanced Settings',
-        gameElementsSettings: 'Game Elements Configuration',
-        showEventNotifications: 'Show Event Notifications',
-        showShadowlordNotifications: 'Show Shadowlord Notifications',
-        showGameForgeTaskbar: 'Show GameForge Taskbar',
-        eventNotificationsDesc: 'Display event messages and announcements in game',
-        shadowlordNotificationsDesc: 'Display shadowlord-related notifications',
-        gameForgeTaskbarDesc: 'Display GameForge taskbar at top of screen',
-        close: 'Close',
-        resetToDefaults: 'Reset to Defaults',
-        confirmResetDefaults: 'Reset all advanced settings to defaults?',
-        
-        // Notifications
-        changesSaved: 'Changes saved!',
-        menuOrderSaved: 'Menu order saved!',
-        customButtonOrderSaved: 'Custom button order saved!',
-        customButtonsSaved: 'Custom buttons saved!',
-        menuSettingsSaved: 'Menu settings saved!',
-        standardOrderReset: 'Standard order reset!',
-        customOrderReset: 'Custom order reset!',
-        languageChanged: 'Language changed!',
-        advancedSettingsSaved: 'Advanced settings saved!',
-        settingsReset: 'Settings reset!'
+          title: 'BiteFight-Me.Cu.',
+          pressF2: 'Press F2',
+          tabToggle: 'Standard',
+          tabCustom: 'Custom',
+          tabSorting: 'Sorting',
+          allOn: 'All On',
+          allOff: 'All Off',
+          addNewButton: 'Add New Button',
+          buttonName: 'Button Name',
+          buttonUrl: '/city/grotte/ or URL (https://...)',
+          openInNewTab: 'Open in new tab',
+          addButton: 'Add Button',
+          manageExistingButtons: 'Manage Existing Buttons',
+          noButtonsAvailable: 'No buttons available',
+          newTab: 'New Tab',
+          sameTab: 'Same Tab',
+          editButton: 'Edit Button',
+          deleteButton: 'Delete Button',
+          confirmDelete: 'Delete button "{0}"?',
+          pleaseEnterNameAndUrl: 'Please enter name and URL!',
+          menuSorting: 'Menu Sorting',
+          sortingDescription: 'Sort standard menu items and custom buttons separately.',
+          autoSaveNote: '**Auto-Save:** Changes are automatically saved and the page will reload.',
+          upArrow: '↑ = Move up',
+          downArrow: '↓ = Move down',
+          standardReset: 'Standard Reset',
+          customReset: 'Custom Reset',
+          sortStandardMenuItems: 'Sort Standard Menu Items',
+          sortCustomButtons: 'Sort Custom Buttons',
+          noCustomButtonsAvailable: 'No custom buttons available',
+          standard: '[Standard]',
+          custom: '[Custom]',
+          confirmStandardReset: 'Restore standard order?',
+          confirmCustomReset: 'Restore custom order?',
+          editButtonTitle: 'Edit Button',
+          buttonNameLabel: 'Button Name:',
+          urlLabel: 'URL:',
+          save: 'Save',
+          cancel: 'Cancel',
+          advancedSettings: 'Advanced Settings',
+          gameElementsSettings: 'Game Elements Configuration',
+          showEventNotifications: 'Show Event Notifications',
+          showShadowlordNotifications: 'Show Shadowlord Notifications',
+          showGameForgeTaskbar: 'Show GameForge Taskbar',
+          eventNotificationsDesc: 'Display event messages and announcements in game',
+          shadowlordNotificationsDesc: 'Display shadowlord-related notifications',
+          gameForgeTaskbarDesc: 'Display GameForge taskbar at top of screen',
+          close: 'Close',
+          resetToDefaults: 'Reset to Defaults',
+          confirmResetDefaults: 'Reset all advanced settings to defaults?',
+          changesSaved: 'Changes saved!',
+          menuOrderSaved: 'Menu order saved!',
+          customButtonOrderSaved: 'Custom button order saved!',
+          customButtonsSaved: 'Custom buttons saved!',
+          toggleCustomButtons: 'Toggle Custom Buttons',
+          menuSettingsSaved: 'Menu settings saved!',
+          standardOrderReset: 'Standard order reset!',
+          customOrderReset: 'Custom order reset!',
+          languageChanged: 'Language changed!',
+          advancedSettingsSaved: 'Advanced settings saved!',
+          settingsReset: 'Settings reset!',
+          information: 'Information'
       }
-    };
+  };
   
-    // Hilfsfunktion für Übersetzungen mit Platzhaltern
-    function t(key, ...args) {
+  function t(key, ...args) {
       let translation = translations[currentLanguage][key] || translations['de'][key] || key;
       args.forEach((arg, index) => {
-        translation = translation.replace(`{${index}}`, arg);
+          translation = translation.replace(`{${index}}`, arg);
       });
       return translation;
-    }
+  }
   
-    // ===== ERWEITERTE EINSTELLUNGEN FUNKTIONALITÄT =====
-    function loadAdvancedSettings() {
+  // ===== ERWEITERTE EINSTELLUNGEN FUNKTIONALITÄT =====
+  
+  function loadAdvancedSettings() {
       try {
-        const settings = localStorage.getItem(ADVANCED_SETTINGS_KEY);
-        return settings ? JSON.parse(settings) : {
-          showEventNotifications: true,
-          showShadowlordNotifications: true,
-          showGameForgeTaskbar: true
-        };
+          const settings = localStorage.getItem(ADVANCED_SETTINGS_KEY);
+          return settings ? JSON.parse(settings) : {
+              showEventNotifications: true,
+              showShadowlordNotifications: true,
+              showGameForgeTaskbar: true
+          };
       } catch (e) {
-        console.error('[BiteFight] Error loading advanced settings:', e);
-        return {
-          showEventNotifications: true,
-          showShadowlordNotifications: true,
-          showGameForgeTaskbar: true
-        };
+          console.error('[BiteFight] Error loading advanced settings:', e);
+          return {
+              showEventNotifications: true,
+              showShadowlordNotifications: true,
+              showGameForgeTaskbar: true
+          };
       }
-    }
+  }
   
-    function saveAdvancedSettings(settings) {
+  function saveAdvancedSettings(settings) {
       try {
-        localStorage.setItem(ADVANCED_SETTINGS_KEY, JSON.stringify(settings));
-        advancedSettings = settings;
-        applyAdvancedSettings();
-        saveAndReload(t('advancedSettingsSaved'));
+          localStorage.setItem(ADVANCED_SETTINGS_KEY, JSON.stringify(settings));
+          advancedSettings = settings;
+          applyAdvancedSettings();
+          saveAndReload(t('advancedSettingsSaved'));
       } catch (e) {
-        console.error('[BiteFight] Error saving advanced settings:', e);
+          console.error('[BiteFight] Error saving advanced settings:', e);
       }
-    }
+  }
   
-    function applyAdvancedSettings() {
+  function applyAdvancedSettings() {
       // Event-Benachrichtigungen
       const eventElements = document.querySelectorAll('#gameEvent, .game-event, [class*="event"], .event-notification');
       eventElements.forEach(element => {
-        if (!advancedSettings.showEventNotifications) {
-          element.style.display = 'none';
-        } else {
-          element.style.display = '';
-        }
+          if (!advancedSettings.showEventNotifications) {
+              element.style.display = 'none';
+          } else {
+              element.style.display = '';
+          }
       });
   
-      // Schattenfürst-Benachrichtigungen
-      const shadowlordElements = document.querySelectorAll('.shadowlord-notification, [class*="shadowlord"], [class*="shadow-lord"], #shadowlordMsg');
+      // Schattenfürst-Benachrichtigungen - ERWEITERTE SELEKTOREN
+      const shadowlordElements = document.querySelectorAll(`
+          .shadowlord-notification, 
+          [class*="shadowlord"], 
+          [class*="shadow-lord"], 
+          [class*="Shadowlord"],
+          [class*="Shadow-Lord"],
+          #shadowlordMsg,
+          #shadowLordMsg,
+          .shadowlord,
+          .shadow-lord,
+          .Shadowlord,
+          .Shadow-Lord,
+          [id*="shadowlord"],
+          [id*="shadow-lord"],
+          [id*="Shadowlord"],
+          [id*="Shadow-Lord"],
+          div[style*="shadowlord"],
+          span[style*="shadowlord"]
+      `);
       shadowlordElements.forEach(element => {
-        if (!advancedSettings.showShadowlordNotifications) {
-          element.style.display = 'none';
-        } else {
-          element.style.display = '';
-        }
+          if (!advancedSettings.showShadowlordNotifications) {
+              element.style.display = 'none !important';
+          } else {
+              element.style.display = '';
+              element.style.removeProperty('display');
+          }
       });
   
       // GameForge-Taskbar
       const gameForgeElements = document.querySelectorAll('#mmonetbar, .gameforge-taskbar, [class*="mmonet"], .gf-taskbar');
       gameForgeElements.forEach(element => {
-        if (!advancedSettings.showGameForgeTaskbar) {
-          element.style.display = 'none';
-        } else {
-          element.style.display = '';
-        }
+          if (!advancedSettings.showGameForgeTaskbar) {
+              element.style.display = 'none';
+          } else {
+              element.style.display = '';
+          }
       });
   
       console.log('[BiteFight] Advanced settings applied:', advancedSettings);
-    }
+  }
   
-    // ===== SPRACH-VERWALTUNG =====
-    function loadLanguage() {
+  // ===== SPRACH-VERWALTUNG =====
+  
+  function loadLanguage() {
       try {
-        const language = localStorage.getItem(LANGUAGE_KEY);
-        return language || detectBrowserLanguage();
+          const language = localStorage.getItem(LANGUAGE_KEY);
+          return language || detectBrowserLanguage();
       } catch (e) {
-        console.error('[BiteFight] Error loading language:', e);
-        return 'de';
+          console.error('[BiteFight] Error loading language:', e);
+          return 'de';
       }
-    }
+  }
   
-    function saveLanguage(language) {
+  function saveLanguage(language) {
       try {
-        localStorage.setItem(LANGUAGE_KEY, language);
-        currentLanguage = language;
-        saveAndReload(t('languageChanged'));
+          localStorage.setItem(LANGUAGE_KEY, language);
+          currentLanguage = language;
+          saveAndReload(t('languageChanged'));
       } catch (e) {
-        console.error('[BiteFight] Error saving language:', e);
+          console.error('[BiteFight] Error saving language:', e);
       }
-    }
+  }
   
-    function detectBrowserLanguage() {
+  function detectBrowserLanguage() {
       const browserLang = navigator.language || navigator.userLanguage || 'de';
       if (browserLang.startsWith('en')) {
-        return 'en';
+          return 'en';
       } else if (browserLang.startsWith('de')) {
-        return 'de';
+          return 'de';
       }
-      return 'de'; // Default
-    }
+      return 'de';
+  }
   
-    // ===== SOFORTIGE INITIALISIERUNG =====
-    // Lade Einstellungen sofort beim Scriptstart
-    currentLanguage = loadLanguage();
-    menuSettings = loadMenuSettings();
-    customButtons = loadCustomButtons();
-    menuOrder = loadMenuOrder();
-    customOrder = loadCustomOrder();
-    advancedSettings = loadAdvancedSettings();
+  // ===== SOFORTIGE INITIALISIERUNG =====
   
-    // Verstecke störende Elemente sofort
-    injectHideCSS();
+  currentLanguage = loadLanguage();
+  menuSettings = loadMenuSettings();
+  customButtons = loadCustomButtons();
+  menuOrder = loadMenuOrder();
+  customOrder = loadCustomOrder();
+  advancedSettings = loadAdvancedSettings();
   
-    // ===== CSS-INJECTION FÜR SOFORTIGES VERSTECKEN =====
-    function injectHideCSS() {
-      const hideCSS = `
+  injectHideCSS();
+  
+  // ===== CSS-INJECTION FÜR DÜSTERES DESIGN =====
+  
+  function injectHideCSS() {
+    const hideCSS = `
         /* Verstecke störende Elemente sofort basierend auf Einstellungen */
         ${!advancedSettings.showEventNotifications ? '#gameEvent, .game-event, [class*="event"], .event-notification { display: none !important; }' : ''}
         ${!advancedSettings.showShadowlordNotifications ? '.shadowlord-notification, [class*="shadowlord"], [class*="shadow-lord"], #shadowlordMsg { display: none !important; }' : ''}
@@ -309,2057 +403,1902 @@
         
         /* Verstecke upgrade message (bleibt immer versteckt) */
         #upgrademsg {
-          display: none !important;
+            display: none !important;
         }
         
         /* Verhindere Flash of Unstyled Content */
         #menuHead {
-          opacity: 0;
-          transition: opacity 0.3s ease;
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
         
-        /* Custom Button Styling - sofort verfügbar mit REDUZIERTEM Abstand */
-        .custom-bitefight-btn {
-          background: linear-gradient(to bottom, #4a6a22 0%, #3a5a12 50%, #2a4a02 100%) !important;
-          background-color: #3a5a12 !important;
-          color: #ffe2a6 !important;
-          border: 1px solid #5a7a22 !important;
-          border-radius: 6px !important;
-          padding: 6px 12px !important;
-          font-weight: bold !important;
-          font-family: 'Trajan Pro', 'Times New Roman', serif !important;
-          font-size: 11px !important;
-          cursor: pointer !important;
-          text-decoration: none !important;
-          display: inline-block !important;
-          text-align: center !important;
-          line-height: 1.2 !important;
-          box-sizing: border-box !important;
-          transition: all 0.15s ease !important;
-          outline: none !important;
-          margin: 3px !important;
-          min-width: 60px !important;
-          min-height: 24px !important;
-          vertical-align: middle !important;
-          white-space: nowrap !important;
-          text-shadow: 1px 1px 1px rgba(0,0,0,0.5) !important;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 1px 2px rgba(0,0,0,0.3) !important;
-          position: relative !important;
-          overflow: hidden !important;
-          margin-top: 3px !important; /* REDUZIERT von 6px auf 3px */
+        /* NEU: Selektive Blur-Effekte und Scroll-Sperrung für Hintergrund */
+        body.bitefight-ui-open {
+            overflow: hidden !important;
+            position: fixed !important;
         }
         
-        /* Flaggen-Buttons Styling */
+        body.bitefight-ui-open > *:not(.bitefight-ui-overlay):not(#menu) {
+            pointer-events: none;
+        }
+        
+        /* KORRIGIERT: Stelle sicher, dass das GESAMTE Menü-Container sichtbar bleibt */
+        body.bitefight-ui-open #menu,
+        body.bitefight-ui-open #menu *,
+        body.bitefight-ui-open #menuHead,
+        body.bitefight-ui-open #menuHead li,
+        body.bitefight-ui-open #menuHead a,
+        body.bitefight-ui-open .custom-menu-item,
+        body.bitefight-ui-open .custom-menu-item a,
+        body.bitefight-ui-open #time {
+            filter: none !important;
+            pointer-events: auto !important;
+            position: relative !important;
+            z-index: 10000 !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+        }
+        
+        /* Custom Menu Items - Standard BiteFight Design */
+        .custom-menu-item {
+            /* Kein spezielles Styling - Standard BiteFight Design */
+        }
+        
+        .custom-menu-item a {
+            /* Custom Button Links sehen EXAKT wie Standard-Links aus */
+        }
+        
+        /* DÜSTERES UI-DESIGN - Hauptfenster */
+        .bitefight-ui {
+            background: linear-gradient(135deg, #1a0a0a 0%, #0a0a0a 100%) !important;
+            border: 3px solid #5a1a1a !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.9), inset 0 0 20px rgba(90, 26, 26, 0.3) !important;
+        }
+        
+        .bitefight-ui-header {
+            background: linear-gradient(90deg, #3a0a0a 0%, #2a0a0a 100%) !important;
+            border-bottom: 2px solid #5a1a1a !important;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.5) !important;
+        }
+        
+        .bitefight-ui-content {
+            background: rgba(26, 10, 10, 0.8) !important;
+        }
+        
+        .bitefight-tab-btn {
+            background: #1a0a0a !important;
+            color: #cc9999 !important;
+            border-right: 1px solid #3a1a1a !important;
+            transition: all 0.3s ease !important;
+        }
+        
+        .bitefight-tab-btn.active {
+            background: #2a0a0a !important;
+            color: #ffcccc !important;
+            box-shadow: inset 0 0 10px rgba(90, 26, 26, 0.5) !important;
+        }
+        
+        .bitefight-tab-btn:hover {
+            background: #3a1a1a !important;
+            color: #ffcccc !important;
+        }
+        
+        /* DÜSTERE BUTTONS */
+        .bitefight-btn {
+            background: linear-gradient(to bottom, #4a1a1a 0%, #3a0a0a 50%, #2a0a0a 100%) !important;
+            color: #ffcccc !important;
+            border: 1px solid #5a1a1a !important;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.8) !important;
+            box-shadow: inset 0 1px 0 rgba(255,204,204,0.1), 0 2px 4px rgba(0,0,0,0.5) !important;
+        }
+        
+        .bitefight-btn:hover {
+            background: linear-gradient(to bottom, #5a2a2a 0%, #4a1a1a 50%, #3a0a0a 100%) !important;
+            border-color: #6a2a2a !important;
+            transform: translateY(-1px) !important;
+            box-shadow: inset 0 1px 0 rgba(255,204,204,0.2), 0 4px 8px rgba(0,0,0,0.6) !important;
+        }
+        
+        .bitefight-btn-danger {
+            background: linear-gradient(to bottom, #5a1a1a 0%, #4a0a0a 50%, #3a0a0a 100%) !important;
+            border-color: #7a2a2a !important;
+        }
+        
+        .bitefight-btn-danger:hover {
+            background: linear-gradient(to bottom, #6a2a2a 0%, #5a1a1a 50%, #4a0a0a 100%) !important;
+            border-color: #8a3a3a !important;
+        }
+        
+        /* DÜSTERE EINGABEFELDER */
+        .bitefight-input {
+            background: #1a0a0a !important;
+            color: #ffcccc !important;
+            border: 1px solid #5a1a1a !important;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5) !important;
+        }
+        
+        .bitefight-input:focus {
+            border-color: #7a2a2a !important;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.5), 0 0 8px rgba(122, 42, 42, 0.4) !important;
+        }
+        
+        /* DÜSTERE CONTAINER */
+        .bitefight-container {
+            background: rgba(26, 10, 10, 0.6) !important;
+            border: 1px solid rgba(90, 26, 26, 0.5) !important;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.3) !important;
+        }
+        
+        .bitefight-container:hover {
+            background: rgba(42, 16, 16, 0.7) !important;
+            border-color: rgba(122, 42, 42, 0.6) !important;
+        }
+        
+        /* Flaggen-Buttons - DÜSTER */
         .language-flag-btn {
-          background: none !important;
-          border: 2px solid transparent !important;
-          border-radius: 4px !important;
-          padding: 4px !important;
-          cursor: pointer !important;
-          font-size: 16px !important;
-          line-height: 1 !important;
-          transition: all 0.2s ease !important;
-          margin: 0 2px !important;
-          display: inline-block !important;
-          text-decoration: none !important;
+            background: none !important;
+            border: 2px solid transparent !important;
+            border-radius: 4px !important;
+            padding: 4px !important;
+            cursor: pointer !important;
+            font-size: 16px !important;
+            line-height: 1 !important;
+            transition: all 0.2s ease !important;
+            margin: 0 2px !important;
+            display: inline-block !important;
+            text-decoration: none !important;
+            filter: sepia(100%) hue-rotate(320deg) saturate(0.8) !important;
         }
         
         .language-flag-btn:hover {
-          border-color: #ffe2a6 !important;
-          background: rgba(255, 226, 166, 0.1) !important;
-          transform: scale(1.1) !important;
+            border-color: #cc9999 !important;
+            background: rgba(204, 153, 153, 0.1) !important;
+            transform: scale(1.1) !important;
+            filter: sepia(100%) hue-rotate(320deg) saturate(1.2) brightness(1.2) !important;
         }
         
         .language-flag-btn.active {
-          border-color: #ffe2a6 !important;
-          background: rgba(255, 226, 166, 0.2) !important;
-          box-shadow: 0 0 8px rgba(255, 226, 166, 0.4) !important;
+            border-color: #ffcccc !important;
+            background: rgba(255, 204, 204, 0.2) !important;
+            box-shadow: 0 0 8px rgba(255, 204, 204, 0.4) !important;
+            filter: sepia(100%) hue-rotate(320deg) saturate(1.5) brightness(1.3) !important;
         }
         
-        /* Settings Button Styling */
+        /* Settings Button - DÜSTER */
         .settings-btn {
-          background: none !important;
-          border: 2px solid transparent !important;
-          border-radius: 4px !important;
-          padding: 4px 6px !important;
-          cursor: pointer !important;
-          font-size: 16px !important;
-          line-height: 1 !important;
-          transition: all 0.2s ease !important;
-          margin: 0 2px !important;
-          display: inline-block !important;
-          text-decoration: none !important;
-          color: #ffe2a6 !important;
+            background: none !important;
+            border: 2px solid transparent !important;
+            border-radius: 4px !important;
+            padding: 4px 6px !important;
+            cursor: pointer !important;
+            font-size: 16px !important;
+            line-height: 1 !important;
+            transition: all 0.2s ease !important;
+            margin: 0 2px !important;
+            display: inline-block !important;
+            text-decoration: none !important;
+            color: #cc9999 !important;
         }
         
         .settings-btn:hover {
-          border-color: #ffe2a6 !important;
-          background: rgba(255, 226, 166, 0.1) !important;
-          transform: scale(1.1) !important;
+            border-color: #cc9999 !important;
+            background: rgba(204, 153, 153, 0.1) !important;
+            transform: scale(1.1) rotate(90deg) !important;
+            color: #ffcccc !important;
+        }
+        
+        /* Info Button - DÜSTER */
+        .info-btn {
+            background: none !important;
+            border: 2px solid transparent !important;
+            border-radius: 4px !important;
+            padding: 4px 6px !important;
+            cursor: pointer !important;
+            font-size: 16px !important;
+            line-height: 1 !important;
+            transition: all 0.2s ease !important;
+            margin: 0 2px !important;
+            display: inline-block !important;
+            text-decoration: none !important;
+            color: #cc9999 !important;
+        }
+        
+        .info-btn:hover {
+            border-color: #cc9999 !important;
+            background: rgba(204, 153, 153, 0.1) !important;
+            transform: scale(1.1) !important;
+            color: #ffcccc !important;
+            text-shadow: 0 0 5px rgba(255, 204, 204, 0.5) !important;
+        }
+        
+        /* FURCHTEINFLÖSSENDE TEXTFARBEN */
+        .bitefight-text-primary {
+            color: #ffcccc !important;
+        }
+        
+        .bitefight-text-secondary {
+            color: #cc9999 !important;
+        }
+        
+        .bitefight-text-danger {
+            color: #ff6666 !important;
+            text-shadow: 0 0 5px rgba(255, 102, 102, 0.5) !important;
+        }
+        
+        .bitefight-text-warning {
+            color: #ffcc66 !important;
         }
       `;
-      
+
       const style = document.createElement('style');
       style.type = 'text/css';
       style.textContent = hideCSS;
       (document.head || document.documentElement).appendChild(style);
-      
-      console.log('[BiteFight] Hide CSS injected immediately with advanced settings');
-    }
+      console.log('[BiteFight] Dark CSS with complete scroll prevention injected');
+  }
   
-    // ===== AUTOMATISCHES SPEICHERN UND NEULADEN =====
-    function saveAndReload(message = t('changesSaved')) {
+  // ===== AUTOMATISCHES SPEICHERN UND NEULADEN =====
+  
+  function saveAndReload(message = t('changesSaved')) {
       console.log('[BiteFight] Saving and reloading:', message);
-      
-      // Kurze Bestätigung anzeigen
       showSaveNotification(message);
-      
-      // Seite nach kurzer Verzögerung neu laden
       setTimeout(() => {
-        window.location.reload();
+          window.location.reload();
       }, 800);
-    }
+  }
   
-    function showSaveNotification(message) {
+  function showSaveNotification(message) {
       const notification = document.createElement('div');
+      notification.className = 'bitefight-container';
       notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: #3a5a12;
-        color: #ffe2a6;
-        padding: 10px 20px;
-        border-radius: 6px;
-        font-weight: bold;
-        z-index: 10002;
-        border: 1px solid #5a7a22;
-        font-family: 'Trajan Pro', 'Times New Roman', serif;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-        animation: slideIn 0.3s ease;
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          padding: 10px 20px;
+          border-radius: 6px;
+          font-weight: bold;
+          z-index: 10002;
+          font-family: 'Trajan Pro', 'Times New Roman', serif;
+          animation: slideIn 0.3s ease;
       `;
-      
+      notification.className = 'bitefight-text-primary';
       notification.textContent = message;
       document.body.appendChild(notification);
-      
-      // Entferne Notification nach Animation
+  
       setTimeout(() => {
-        if (notification.parentNode) {
-          notification.parentNode.removeChild(notification);
-        }
+          if (notification.parentNode) {
+              notification.parentNode.removeChild(notification);
+          }
       }, 700);
-      
-      // CSS Animation
+  
       const animationCSS = `
-        @keyframes slideIn {
-          from { transform: translateX(100%); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
+          @keyframes slideIn {
+              from { transform: translateX(100%); opacity: 0; }
+              to { transform: translateX(0); opacity: 1; }
+          }
       `;
-      
       const animStyle = document.createElement('style');
       animStyle.textContent = animationCSS;
       document.head.appendChild(animStyle);
-    }
+  }
   
-    // ===== SETTINGS-FENSTER =====
-    function createSettingsWindow() {
-      if (settingsWindow) {
-        // Fenster bereits geöffnet - schließe es
-        settingsWindow.parentNode.removeChild(settingsWindow);
-        settingsWindow = null;
-        return;
-      }
+  // ===== ERWEITERTE MENÜ-SORTIERUNG =====
   
-      settingsWindow = document.createElement('div');
-      settingsWindow.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: rgba(0, 0, 0, 0.8);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 10003;
-        font-family: 'Trajan Pro', 'Times New Roman', serif;
-      `;
-      
-      const settingsDialog = document.createElement('div');
-      settingsDialog.style.cssText = `
-        background: rgba(60, 30, 15, 0.95);
-        border: 2px solid #8b4513;
-        border-radius: 12px;
-        padding: 25px;
-        width: 500px;
-        max-height: 80vh;
-        overflow-y: auto;
-        color: #ffe2a6;
-      `;
-      
-      const title = document.createElement('h2');
-      title.textContent = t('advancedSettings');
-      title.style.cssText = `
-        margin: 0 0 20px 0;
-        text-align: center;
-        color: #ffe2a6;
-        font-size: 1.5em;
-      `;
-      
-      const sectionTitle = document.createElement('h3');
-      sectionTitle.textContent = t('gameElementsSettings');
-      sectionTitle.style.cssText = `
-        margin: 0 0 15px 0;
-        color: #ffe2a6;
-        font-size: 1.2em;
-        border-bottom: 1px solid #8b4513;
-        padding-bottom: 5px;
-      `;
-      
-      // Event-Benachrichtigungen
-      const eventContainer = createSettingControl(
-        'showEventNotifications',
-        t('showEventNotifications'),
-        t('eventNotificationsDesc'),
-        advancedSettings.showEventNotifications
-      );
-      
-      // Schattenfürst-Benachrichtigungen
-      const shadowlordContainer = createSettingControl(
-        'showShadowlordNotifications',
-        t('showShadowlordNotifications'),
-        t('shadowlordNotificationsDesc'),
-        advancedSettings.showShadowlordNotifications
-      );
-      
-      // GameForge-Taskbar
-      const gameforgeContainer = createSettingControl(
-        'showGameForgeTaskbar',
-        t('showGameForgeTaskbar'),
-        t('gameForgeTaskbarDesc'),
-        advancedSettings.showGameForgeTaskbar
-      );
-      
-      // Buttons Container
-      const buttonContainer = document.createElement('div');
-      buttonContainer.style.cssText = `
-        display: flex;
-        gap: 10px;
-        justify-content: space-between;
-        margin-top: 25px;
-        padding-top: 15px;
-        border-top: 1px solid #8b4513;
-      `;
-      
-      const resetButton = document.createElement('button');
-      resetButton.textContent = t('resetToDefaults');
-      resetButton.style.cssText = `
-        padding: 10px 20px;
-        background: #8b1538;
-        color: #ffe2a6;
-        border: 1px solid #a01a42;
-        border-radius: 6px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
-      
-      const closeButton = document.createElement('button');
-      closeButton.textContent = t('close');
-      closeButton.style.cssText = `
-        padding: 10px 20px;
-        background: #3a5a12;
-        color: #ffe2a6;
-        border: 1px solid #5a7a22;
-        border-radius: 6px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
-      
-      resetButton.addEventListener('click', () => {
-        if (confirm(t('confirmResetDefaults'))) {
-          const defaults = {
-            showEventNotifications: true,
-            showShadowlordNotifications: true,
-            showGameForgeTaskbar: true
-          };
-          saveAdvancedSettings(defaults);
-        }
-      });
-      
-      closeButton.addEventListener('click', () => {
-        // Sammle alle Einstellungen
-        const newSettings = {};
-        const checkboxes = settingsDialog.querySelectorAll('input[type="checkbox"]');
-        checkboxes.forEach(checkbox => {
-          newSettings[checkbox.id] = checkbox.checked;
-        });
-        
-        // Speichere nur wenn sich etwas geändert hat
-        const changed = Object.keys(newSettings).some(key => 
-          newSettings[key] !== advancedSettings[key]
-        );
-        
-        if (changed) {
-          saveAdvancedSettings(newSettings);
-        } else {
-          // Schließe ohne Speichern
-          settingsWindow.parentNode.removeChild(settingsWindow);
-          settingsWindow = null;
-        }
-      });
-      
-      // Escape-Key Handler
-      const escapeHandler = (e) => {
-        if (e.key === 'Escape') {
-          settingsWindow.parentNode.removeChild(settingsWindow);
-          settingsWindow = null;
-          document.removeEventListener('keydown', escapeHandler);
-        }
-      };
-      document.addEventListener('keydown', escapeHandler);
-      
-      buttonContainer.appendChild(resetButton);
-      buttonContainer.appendChild(closeButton);
-      
-      settingsDialog.appendChild(title);
-      settingsDialog.appendChild(sectionTitle);
-      settingsDialog.appendChild(eventContainer);
-      settingsDialog.appendChild(shadowlordContainer);
-      settingsDialog.appendChild(gameforgeContainer);
-      settingsDialog.appendChild(buttonContainer);
-      
-      settingsWindow.appendChild(settingsDialog);
-      document.body.appendChild(settingsWindow);
-    }
-  
-    function createSettingControl(id, label, description, checked) {
-      const container = document.createElement('div');
-      container.style.cssText = `
-        margin-bottom: 20px;
-        padding: 15px;
-        background: rgba(139, 69, 19, 0.2);
-        border-radius: 8px;
-        border: 1px solid rgba(139, 69, 19, 0.4);
-      `;
-      
-      const labelContainer = document.createElement('div');
-      labelContainer.style.cssText = `
-        display: flex;
-        align-items: center;
-        margin-bottom: 8px;
-      `;
-      
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.id = id;
-      checkbox.checked = checked;
-      checkbox.style.cssText = `
-        margin-right: 10px;
-        transform: scale(1.2);
-      `;
-      
-      const labelElement = document.createElement('label');
-      labelElement.htmlFor = id;
-      labelElement.textContent = label;
-      labelElement.style.cssText = `
-        color: #ffe2a6;
-        cursor: pointer;
-        font-weight: bold;
-        font-size: 1.1em;
-      `;
-      
-      const descElement = document.createElement('div');
-      descElement.textContent = description;
-      descElement.style.cssText = `
-        color: #cccccc;
-        font-size: 0.9em;
-        margin-left: 32px;
-        line-height: 1.4;
-      `;
-      
-      labelContainer.appendChild(checkbox);
-      labelContainer.appendChild(labelElement);
-      container.appendChild(labelContainer);
-      container.appendChild(descElement);
-      
-      return container;
-    }
-  
-    // ===== HILFSFUNKTIONEN =====
-    function isValidBiteFightDomain() {
-      return window.location.hostname.includes('bitefight.gameforge.com');
-    }
-  
-    function isValidBiteFightPath() {
-      const currentPath = window.location.pathname;
-      const validPaths = [
-        /^\/profile($|\/.*)/,     // /profile oder /profile/...
-        /^\/city($|\/.*)/,        // /city oder /city/...
-        /^\/clan($|\/.*)/,        // /clan oder /clan/...
-        /^\/hunt($|\/.*)/,        // /hunt oder /hunt/...
-        /^\/messages($|\/.*)/,    // /messages oder /messages/...
-        /^\/msg($|\/.*)/,         // /msg oder /msg/...
-        /^\/report($|\/.*)/,      // /report oder /report/...
-        /^\/graveyard($|\/.*)/,   // /graveyard oder /graveyard/...
-        /^\/fight($|\/.*)/,       // /fight oder /fight/...
-        /^\/admin($|\/.*)/,       // /admin oder /admin/...
-        /^\/ranking($|\/.*)/,     // /ranking oder /ranking/...
-        /^\/robbery($|\/.*)/,     // /robbery oder /robbery/... (Jagd)
-        /^\/hideout($|\/.*)/,     // /hideout oder /hideout/... (Versteck)
-        /^\/user($|\/.*)/,        // /user oder /user/... (Einstellungen, etc.)
-        /^\/buddy($|\/.*)/,       // /buddy oder /buddy/... (Freundesliste)
-        /^\/main($|\/.*)/,        // /main oder /main/... (Neuigkeiten)
-        /^\/$/                    // Hauptseite
-      ];
-      
-      return validPaths.some(pattern => pattern.test(currentPath));
-    }
-  
-    // Server und Sprache automatisch erkennen
-    function detectServerInfo() {
-      const hostname = window.location.hostname;
-      const serverMatch = hostname.match(/^(s\d+)-([a-z]{2})\.bitefight\.gameforge\.com$/);
-      
-      if (serverMatch) {
-        return {
-          server: serverMatch[1], // z.B. "s64"
-          language: serverMatch[2], // z.B. "de"
-          fullServer: `${serverMatch[1]}-${serverMatch[2]}` // z.B. "s64-de"
-        };
-      }
-      return null;
-    }
-  
-    // ===== ERWEITERTE MENÜ-SORTIERUNG =====
-    function loadMenuOrder() {
+  function loadMenuOrder() {
       try {
-        const order = localStorage.getItem(MENU_ORDER_KEY);
-        return order ? JSON.parse(order) : [];
+          const order = localStorage.getItem(MENU_ORDER_KEY);
+          return order ? JSON.parse(order) : [];
       } catch (e) {
-        console.error('[BiteFight] Error loading menu order:', e);
-        return [];
+          console.error('[BiteFight] Error loading menu order:', e);
+          return [];
       }
-    }
+  }
   
-    function saveMenuOrder(order) {
+  function saveMenuOrder(order) {
       try {
-        localStorage.setItem(MENU_ORDER_KEY, JSON.stringify(order));
-        menuOrder = order;
-        saveAndReload(t('menuOrderSaved'));
+          localStorage.setItem(MENU_ORDER_KEY, JSON.stringify(order));
+          menuOrder = order;
+          // NEU: Wende die neue Reihenfolge sofort an ohne Reload
+          applyMenuOrder();
+          showSaveNotification(t('menuOrderSaved'));
       } catch (e) {
-        console.error('[BiteFight] Error saving menu order:', e);
+          console.error('[BiteFight] Error saving menu order:', e);
       }
-    }
+  }
   
-    function loadCustomOrder() {
+  function loadCustomOrder() {
       try {
-        const order = localStorage.getItem(CUSTOM_ORDER_KEY);
-        return order ? JSON.parse(order) : [];
+          const order = localStorage.getItem(CUSTOM_ORDER_KEY);
+          return order ? JSON.parse(order) : [];
       } catch (e) {
-        console.error('[BiteFight] Error loading custom order:', e);
-        return [];
+          console.error('[BiteFight] Error loading custom order:', e);
+          return [];
       }
-    }
+  }
   
-    function saveCustomOrder(order) {
+  function saveCustomOrder(order) {
       try {
-        localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(order));
-        customOrder = order;
-        saveAndReload(t('customButtonOrderSaved'));
+          localStorage.setItem(CUSTOM_ORDER_KEY, JSON.stringify(order));
+          customOrder = order;
+          saveAndReload(t('customButtonOrderSaved'));
       } catch (e) {
-        console.error('[BiteFight] Error saving custom order:', e);
+          console.error('[BiteFight] Error saving custom order:', e);
       }
-    }
+  }
   
-    function extractStandardMenuItems(menu) {
-      const items = [];
-      const menuItems = menu.querySelectorAll('li');
-      
-      menuItems.forEach((item, index) => {
-        const link = item.querySelector('a');
-        // Nur Standard-Items, keine Custom-Items und keine Zeit
-        if (link && !item.classList.contains('custom-menu-item') && !item.id?.includes('time')) {
-          const isVisible = item.style.display !== 'none';
-          const menuKey = `menu-item-${index}`;
-          const savedVisibility = menuSettings[menuKey];
-          
-          items.push({
-            element: item,
-            text: link.textContent.trim(),
-            href: link.href,
-            target: link.target,
-            isCustom: false,
-            originalIndex: index,
-            id: `standard-${link.textContent.trim().replace(/\s+/g, '-')}`,
-            isVisible: savedVisibility !== undefined ? savedVisibility : isVisible,
-            menuKey: menuKey
-          });
-        }
-      });
-      
-      return items;
-    }
-  
-    function extractCustomMenuItems() {
-      return customButtons.map((button, index) => ({
-        button: button,
-        text: button.name,
-        id: `custom-${button.name.replace(/\s+/g, '-')}`,
-        index: index
-      }));
-    }
-  
-    function applyStandardMenuOrder(menu, items) {
-      if (!menu || !items.length) return;
-      
-      // Finde und behalte spezielle Elemente (wie Zeit und Custom Buttons)
-      const timeElement = menu.querySelector('#time, li[id*="time"]');
-      const customElements = menu.querySelectorAll('.custom-menu-item');
-      
-      // Entferne Zeit und Custom Elements temporär
-      if (timeElement && timeElement.parentNode) {
-        timeElement.parentNode.removeChild(timeElement);
+  function loadMenuSettings() {
+      try {
+          const settings = localStorage.getItem(STORAGE_KEY);
+          return settings ? JSON.parse(settings) : {};
+      } catch (e) {
+          console.error('[BiteFight] Error loading menu settings:', e);
+          return {};
       }
-      
-      customElements.forEach(element => {
-        if (element.parentNode) {
-          element.parentNode.removeChild(element);
-        }
-      });
-      
-      // Entferne alle Standard-Items aus dem Menü
-      items.forEach(item => {
-        if (item.element.parentNode) {
-          item.element.parentNode.removeChild(item.element);
-        }
-      });
-      
-      // Sortiere Items basierend auf gespeicherter Reihenfolge
-      let sortedItems = [...items];
-      
-      if (menuOrder.length > 0) {
-        sortedItems = [];
-        
-        // Füge Items in der gespeicherten Reihenfolge hinzu
-        menuOrder.forEach(orderId => {
-          const item = items.find(i => i.id === orderId);
-          if (item) {
-            sortedItems.push(item);
-          }
-        });
-        
-        // Füge neue Items hinzu, die nicht in der gespeicherten Reihenfolge sind
-        items.forEach(item => {
-          if (!menuOrder.includes(item.id)) {
-            sortedItems.push(item);
-          }
-        });
-      }
-      
-      // Füge Standard-Items in der neuen Reihenfolge zum Menü hinzu
-      sortedItems.forEach((item) => {
-        // Wende gespeicherte Sichtbarkeitseinstellungen an
-        item.element.style.display = item.isVisible ? 'block' : 'none';
-        menu.appendChild(item.element);
-      });
-      
-      // Füge Zeit-Element hinzu
-      if (timeElement) {
-        menu.appendChild(timeElement);
-      }
-      
-      // Füge Custom Elements NACH der Zeit hinzu
-      customElements.forEach(element => {
-        menu.appendChild(element);
-      });
-      
-      console.log('[BiteFight] Standard menu order applied with preserved visibility');
-    }
+  }
   
-    function applySortedCustomButtons(menu) {
+  function loadCustomButtons() {
+      try {
+          const buttons = localStorage.getItem(CUSTOM_BUTTONS_KEY);
+          const loadedButtons = buttons ? JSON.parse(buttons) : [];
+          return loadedButtons.map(button => ({
+              ...button,
+              enabled: button.enabled !== undefined ? button.enabled : true,
+              position: button.position || 'after-time'
+          }));
+      } catch (e) {
+          console.error('[BiteFight] Error loading custom buttons:', e);
+          return [];
+      }
+  }
+  
+  function saveCustomButtons() {
+      try {
+          localStorage.setItem(CUSTOM_BUTTONS_KEY, JSON.stringify(customButtons));
+          saveAndReload(t('customButtonsSaved'));
+      } catch (e) {
+          console.error('[BiteFight] Error saving custom buttons:', e);
+      }
+  }
+  
+  function applySortedCustomButtons(menu) {
       if (!menu) return;
       
-      // Entferne alle bestehenden Custom-Links
       const existingCustomLinks = menu.querySelectorAll('.custom-menu-item');
       existingCustomLinks.forEach(link => link.remove());
       
       if (customButtons.length === 0) return;
       
-      // Sortiere Custom Buttons basierend auf gespeicherter Reihenfolge
       let sortedButtons = [...customButtons];
-      
       if (customOrder.length > 0) {
-        sortedButtons = [];
-        
-        customOrder.forEach(orderId => {
-          const button = customButtons.find(btn => `custom-${btn.name.replace(/\s+/g, '-')}` === orderId);
-          if (button) {
-            sortedButtons.push(button);
-          }
-        });
-        
-        // Füge neue Buttons hinzu, die nicht in der gespeicherten Reihenfolge sind
-        customButtons.forEach(button => {
-          const buttonId = `custom-${button.name.replace(/\s+/g, '-')}`;
-          if (!customOrder.includes(buttonId)) {
-            sortedButtons.push(button);
-          }
-        });
+          sortedButtons = [];
+          customOrder.forEach(orderId => {
+              const button = customButtons.find(btn => `custom-${btn.name.replace(/\s+/g, '-')}` === orderId);
+              if (button) {
+                  sortedButtons.push(button);
+              }
+          });
+          
+          customButtons.forEach(button => {
+              const buttonId = `custom-${button.name.replace(/\s+/g, '-')}`;
+              if (!customOrder.includes(buttonId)) {
+                  sortedButtons.push(button);
+              }
+          });
       }
       
-      // Füge Custom-Links am Ende des Menüs hinzu (NACH dem Zeit-Element)
+      // Nur aktivierte Buttons hinzufügen
       sortedButtons.forEach((button) => {
-        const customLi = createBiteFightMenuLink(button.name, button.url, button.newTab);
-        menu.appendChild(customLi);
+          if (button.enabled !== false) {
+              const customLi = createBiteFightMenuLink(button.name, button.url, button.newTab);
+              customLi.classList.add('custom-menu-item');
+              
+              if (button.position === 'between-standard' && button.insertAfterIndex !== undefined) {
+                  const standardButtons = menu.querySelectorAll('li:not(.custom-menu-item):not(#time)');
+                  if (standardButtons[button.insertAfterIndex]) {
+                      standardButtons[button.insertAfterIndex].parentNode.insertBefore(customLi, standardButtons[button.insertAfterIndex].nextSibling);
+                  } else {
+                      const timeElement = menu.querySelector('#time');
+                      if (timeElement) {
+                          timeElement.parentNode.insertBefore(customLi, timeElement.nextSibling);
+                      } else {
+                          menu.appendChild(customLi);
+                      }
+                  }
+              } else {
+                  const timeElement = menu.querySelector('#time');
+                  if (timeElement) {
+                      timeElement.parentNode.insertBefore(customLi, timeElement.nextSibling);
+                  } else {
+                      menu.appendChild(customLi);
+                  }
+              }
+          }
       });
       
-      console.log('[BiteFight] Custom buttons applied with sorting');
-    }
+      console.log('[BiteFight] Custom buttons applied with intelligent positioning');
+  }
   
-    // ===== KLONE ORIGINAL BITEFIGHT MENÜ-LINKS =====
-    function createBiteFightMenuLink(linkText, url, openInNewTab = false) {
-      // Finde ein Original-Menü-Link aus #menuHead
-      const originalMenuLinks = document.querySelectorAll('#menuHead li a');
-      let referenceLink = null;
-      
-      // Nimm den ersten verfügbaren Link als Referenz
-      if (originalMenuLinks.length > 0) {
-        referenceLink = originalMenuLinks[0];
-      }
-      
-      if (referenceLink) {
-        // Klone das Original <li> Element komplett
-        const originalLi = referenceLink.parentElement;
-        const clonedLi = originalLi.cloneNode(true);
-        const clonedLink = clonedLi.querySelector('a');
-        
-        // Passe den geklonten Link an
-        clonedLink.textContent = linkText;
-        clonedLink.href = url;
-        clonedLink.target = openInNewTab ? '_blank' : '_top';
-        
-        // Entferne Original-Event-Listener und IDs
-        clonedLink.removeAttribute('id');
-        clonedLi.removeAttribute('id');
-        clonedLi.className = 'custom-menu-item';
-        
-        // Entferne alle Bilder (Premium-Badges etc.)
-        const images = clonedLi.querySelectorAll('img');
-        images.forEach(img => img.remove());
-        
-        // REDUZIERTER Abstand: 3px statt 10px
-        clonedLi.style.marginTop = '3px';
-        
-        console.log('[BiteFight] Created menu link:', clonedLi);
-        return clonedLi;
-      } else {
-        // Fallback: Erstelle einen Link im BiteFight-Stil
-        const li = document.createElement('li');
-        li.className = 'custom-menu-item';
-        li.style.cssText = 'display: block; margin-top: 3px;'; // REDUZIERT
-        
-        const link = document.createElement('a');
-        link.href = url;
-        link.target = openInNewTab ? '_blank' : '_top';
-        link.textContent = linkText;
-        link.style.cssText = `
-          color: #ffe2a6;
-          text-decoration: none;
-          display: block;
-          padding: 8px 12px;
-          font-family: 'Trajan Pro', 'Times New Roman', serif;
-          font-weight: bold;
-          font-size: 11px;
-        `;
-        
-        li.appendChild(link);
-        return li;
-      }
-    }
+  // ===== KORRIGIERTE SOFORTIGE MENÜ-SORTIERUNG =====
   
-    // ===== OPTIMIERTE MENÜ-ANWENDUNG =====
-    function addCustomLinksToMainMenu(menu) {
+  function applyMenuOrder() {
+      const menu = document.querySelector('#menuHead');
       if (!menu) return;
       
-      applySortedCustomButtons(menu);
+      if (menuOrder.length === 0) return;
       
-      // Wende Standard-Menü-Sortierung an (Custom Buttons bleiben am Ende)
-      const standardItems = extractStandardMenuItems(menu);
-      applyStandardMenuOrder(menu, standardItems);
+      console.log('[BiteFight] Applying menu order:', menuOrder);
       
-      // Wende erweiterte Einstellungen an
-      applyAdvancedSettings();
+      // Sammle alle Standard-Menü-Li-Elemente mit stabilen IDs
+      const menuItemsMap = new Map();
+      const menuLinks = menu.querySelectorAll('li:not(.custom-menu-item):not(#time)');
       
-      // Menü sichtbar machen (entferne das opacity: 0 aus dem CSS)
-      menu.style.opacity = '1';
+      menuLinks.forEach((li) => {
+          const link = li.querySelector('a');
+          if (link && link.textContent.trim()) {
+              const href = link.getAttribute('href') || '';
+              const stableId = href ? `menu-${href.replace(/[^a-zA-Z0-9]/g, '-')}` : `menu-text-${link.textContent.trim().replace(/[^a-zA-Z0-9]/g, '-')}`;
+              menuItemsMap.set(stableId, li);
+          }
+      });
       
-      console.log('[BiteFight] Added custom links after time element - menu visible');
-    }
+      // Sammle Custom Buttons und Zeit-Element
+      const customButtons = menu.querySelectorAll('.custom-menu-item');
+      const timeElement = menu.querySelector('#time');
+      
+      // Leere das Menü
+      menu.innerHTML = '';
+      
+      // Füge Standard-Elemente in neuer Reihenfolge hinzu
+      menuOrder.forEach(orderId => {
+          const element = menuItemsMap.get(orderId);
+          if (element) {
+              menu.appendChild(element);
+          }
+      });
+      
+      // Füge nicht-sortierte Elemente hinzu
+      menuItemsMap.forEach((element, id) => {
+          if (!menuOrder.includes(id)) {
+              menu.appendChild(element);
+          }
+      });
+      
+      // Füge Zeit-Element hinzu
+      if (timeElement) {
+          menu.appendChild(timeElement);
+      }
+      
+      // Füge Custom Buttons nach der Zeit hinzu
+      customButtons.forEach(button => {
+          menu.appendChild(button);
+      });
+      
+      console.log('[BiteFight] Menu order applied successfully');
+  }
   
-    // ===== SCHNELLE MENÜ-ERKENNUNG =====
-    function waitForMenu(callback) {
-      let attempts = 0;
-      const maxAttempts = 30; // Reduziert von 60 auf 30
-      const checkInterval = 50; // Reduziert von 100ms auf 50ms
+  function createBiteFightMenuLink(linkText, url, openInNewTab = false) {
+      const originalMenuLinks = document.querySelectorAll('#menuHead li');
+      let referenceLink = null;
       
-      const interval = setInterval(() => {
-        attempts++;
-        
-        const menuSelectors = [
-          { selector: '#menuHead', priority: 1 },
-          { selector: '.menuHead', priority: 1 },
-          { selector: '[id*="menu"][id*="Head"]', priority: 2 },
-          { selector: '[class*="menu"][class*="head"]', priority: 2 },
-          { selector: '#menu', priority: 3 }
-        ];
-        
-        let bestMenu = null;
-        let bestPriority = 999;
-        
-        for (const {selector, priority} of menuSelectors) {
-          try {
-            const elements = document.querySelectorAll(selector);
-            for (const element of elements) {
-              const links = element.querySelectorAll('a');
-              const hasValidLinks = links.length >= 1;
-              const isVisible = element.offsetHeight > 0 && element.offsetWidth > 0;
+      for (let i = 0; i < originalMenuLinks.length; i++) {
+          if (!originalMenuLinks[i].classList.contains('custom-menu-item')) {
+              referenceLink = originalMenuLinks[i];
+              break;
+          }
+      }
+  
+      if (referenceLink) {
+          const customLi = referenceLink.cloneNode(true);
+          customLi.innerHTML = '';
+          
+          const customLink = document.createElement('a');
+          customLink.textContent = linkText;
+          customLink.href = url;
+          customLink.target = openInNewTab ? '_blank' : '_self';
+          
+          const originalLink = referenceLink.querySelector('a');
+          if (originalLink) {
+              customLink.className = originalLink.className;
+          }
+          
+          customLi.classList.add('custom-menu-item');
+          customLi.appendChild(customLink);
+          
+          console.log('[BiteFight] Custom button created:', linkText);
+          return customLi;
+      } else {
+          const customLi = document.createElement('li');
+          customLi.classList.add('custom-menu-item');
+          
+          const customLink = document.createElement('a');
+          customLink.textContent = linkText;
+          customLink.href = url;
+          customLink.target = openInNewTab ? '_blank' : '_self';
+          
+          const existingMenuLink = document.querySelector('#menuHead li:not(.custom-menu-item) a');
+          if (existingMenuLink) {
+              customLink.className = existingMenuLink.className;
+          }
+          
+          customLi.appendChild(customLink);
+          
+          console.log('[BiteFight] Custom button created (fallback):', linkText);
+          return customLi;
+      }
+  }
+  
+  // ===== KORRIGIERTE getMenuItems FUNKTION MIT STABILEN IDs =====
+  function getMenuItems() {
+      const items = [];
+      const menu = document.querySelector('#menuHead');
+      if (!menu) return items;
+      
+      const menuLinks = document.querySelectorAll('#menuHead li:not(.custom-menu-item):not(#time)');
+      menuLinks.forEach((li, index) => {
+          const link = li.querySelector('a');
+          if (link && link.textContent.trim()) {
+              // KORRIGIERT: Verwende URL oder Text als stabile ID
+              const href = link.getAttribute('href') || '';
+              const stableId = href ? `menu-${href.replace(/[^a-zA-Z0-9]/g, '-')}` : `menu-text-${link.textContent.trim().replace(/[^a-zA-Z0-9]/g, '-')}`;
               
-              if (isVisible && hasValidLinks && priority < bestPriority) {
-                bestMenu = element;
-                bestPriority = priority;
-                console.log(`[BiteFight] Found menu with selector "${selector}":`, element);
-              }
-            }
-          } catch (e) {
-            console.log(`[BiteFight] Selector "${selector}" not supported:`, e.message);
-          }
-        }
-        
-        if (bestMenu) {
-          console.log(`[BiteFight] Menu found after ${attempts} attempts in ${Date.now() - pageLoadStartTime}ms`);
-          clearInterval(interval);
-          callback(bestMenu);
-          return;
-        }
-        
-        if (attempts >= maxAttempts) {
-          console.warn('[BiteFight] No menu found after optimization, creating fallback menu.');
-          clearInterval(interval);
-          createFallbackMenu(callback);
-        }
-      }, checkInterval);
-    }
-  
-    function createFallbackMenu(callback) {
-      const fallbackContainer = document.querySelector('body, .content, #content, main, .container');
-      if (fallbackContainer) {
-        const fallbackMenu = document.createElement('ul');
-        fallbackMenu.id = 'fallbackMenu';
-        fallbackMenu.style.cssText = `
-          list-style: none !important;
-          margin: 10px 0 !important;
-          padding: 10px !important;
-          background: rgba(60, 30, 15, 0.95) !important;
-          border-radius: 8px !important;
-          display: block !important;
-          position: relative !important;
-          z-index: 1000 !important;
-          opacity: 1 !important;
-        `;
-        
-        const standardLinks = [
-          { text: 'Profil', href: '/profile/index' },
-          { text: 'Stadt', href: '/city/index' },
-          { text: 'Clan', href: '/clan/index' }
-        ];
-        
-        standardLinks.forEach(linkData => {
-          const li = document.createElement('li');
-          const a = document.createElement('a');
-          a.href = linkData.href;
-          a.textContent = linkData.text;
-          a.style.cssText = 'color: #ffe2a6 !important; text-decoration: none !important; display: block !important; padding: 5px !important;';
-          li.appendChild(a);
-          fallbackMenu.appendChild(li);
-        });
-        
-        fallbackContainer.insertBefore(fallbackMenu, fallbackContainer.firstChild);
-        callback(fallbackMenu);
-      }
-    }
-  
-    // ===== CUSTOM BUTTONS FUNKTIONALITÄT =====
-    function loadCustomButtons() {
-      try {
-        const buttons = localStorage.getItem(CUSTOM_BUTTONS_KEY);
-        return buttons ? JSON.parse(buttons) : [];
-      } catch (e) {
-        console.error('[BiteFight] Error loading custom buttons:', e);
-        return [];
-      }
-    }
-  
-    function saveCustomButtons(buttons) {
-      try {
-        localStorage.setItem(CUSTOM_BUTTONS_KEY, JSON.stringify(buttons));
-        customButtons = buttons;
-        saveAndReload(t('customButtonsSaved'));
-      } catch (e) {
-        console.error('[BiteFight] Error saving custom buttons:', e);
-      }
-    }
-  
-    // ===== ERWEITERTE BUTTON-BEARBEITUNG =====
-    function createEditDialog(button, buttonIndex, callback) {
-      // Erstelle Modal Dialog
-      const modal = document.createElement('div');
-      modal.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background: rgba(0, 0, 0, 0.8);
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        z-index: 10001;
-        font-family: 'Trajan Pro', 'Times New Roman', serif;
-      `;
-      
-      const dialog = document.createElement('div');
-      dialog.style.cssText = `
-        background: rgba(60, 30, 15, 0.95);
-        border: 2px solid #8b4513;
-        border-radius: 12px;
-        padding: 20px;
-        width: 400px;
-        color: #ffe2a6;
-      `;
-      
-      const title = document.createElement('h3');
-      title.textContent = t('editButtonTitle');
-      title.style.cssText = `
-        margin: 0 0 20px 0;
-        text-align: center;
-        color: #ffe2a6;
-      `;
-      
-      // Name Input
-      const nameLabel = document.createElement('label');
-      nameLabel.textContent = t('buttonNameLabel');
-      nameLabel.style.cssText = `
-        display: block;
-        margin-bottom: 5px;
-        color: #ffe2a6;
-        font-weight: bold;
-      `;
-      
-      const nameInput = document.createElement('input');
-      nameInput.type = 'text';
-      nameInput.value = button.name;
-      nameInput.style.cssText = `
-        width: 100%;
-        padding: 8px;
-        margin-bottom: 15px;
-        background: rgba(139, 69, 19, 0.3);
-        border: 1px solid #8b4513;
-        border-radius: 4px;
-        color: #ffe2a6;
-        font-size: 14px;
-      `;
-      
-      // URL Input
-      const urlLabel = document.createElement('label');
-      urlLabel.textContent = t('urlLabel');
-      urlLabel.style.cssText = `
-        display: block;
-        margin-bottom: 5px;
-        color: #ffe2a6;
-        font-weight: bold;
-      `;
-      
-      const urlInput = document.createElement('input');
-      urlInput.type = 'url';
-      urlInput.value = button.url;
-      urlInput.style.cssText = `
-        width: 100%;
-        padding: 8px;
-        margin-bottom: 15px;
-        background: rgba(139, 69, 19, 0.3);
-        border: 1px solid #8b4513;
-        border-radius: 4px;
-        color: #ffe2a6;
-        font-size: 14px;
-      `;
-      
-      // Neuer Tab Checkbox
-      const newTabContainer = document.createElement('div');
-      newTabContainer.style.cssText = `
-        display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-      `;
-      
-      const newTabCheckbox = document.createElement('input');
-      newTabCheckbox.type = 'checkbox';
-      newTabCheckbox.id = 'editNewTabCheckbox';
-      newTabCheckbox.checked = button.newTab || false;
-      newTabCheckbox.style.marginRight = '8px';
-      
-      const newTabLabel = document.createElement('label');
-      newTabLabel.htmlFor = 'editNewTabCheckbox';
-      newTabLabel.textContent = t('openInNewTab');
-      newTabLabel.style.cssText = `
-        color: #ffe2a6;
-        cursor: pointer;
-        font-size: 14px;
-      `;
-      
-      newTabContainer.appendChild(newTabCheckbox);
-      newTabContainer.appendChild(newTabLabel);
-      
-      // Buttons
-      const buttonContainer = document.createElement('div');
-      buttonContainer.style.cssText = `
-        display: flex;
-        gap: 10px;
-        justify-content: flex-end;
-      `;
-      
-      const saveButton = document.createElement('button');
-      saveButton.textContent = t('save');
-      saveButton.style.cssText = `
-        padding: 10px 20px;
-        background: #3a5a12;
-        color: #ffe2a6;
-        border: 1px solid #5a7a22;
-        border-radius: 6px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
-      
-      const cancelButton = document.createElement('button');
-      cancelButton.textContent = t('cancel');
-      cancelButton.style.cssText = `
-        padding: 10px 20px;
-        background: #8b1538;
-        color: #ffe2a6;
-        border: 1px solid #a01a42;
-        border-radius: 6px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
-      
-      saveButton.addEventListener('click', () => {
-        const newName = nameInput.value.trim();
-        const newUrl = urlInput.value.trim();
-        const newTab = newTabCheckbox.checked;
-        
-        if (newName && newUrl) {
-          callback({
-            name: newName,
-            url: newUrl,
-            newTab: newTab
-          });
-          document.body.removeChild(modal);
-        } else {
-          alert(t('pleaseEnterNameAndUrl'));
-        }
-      });
-      
-      cancelButton.addEventListener('click', () => {
-        document.body.removeChild(modal);
-      });
-      
-      // Escape-Key Handler
-      const escapeHandler = (e) => {
-        if (e.key === 'Escape') {
-          document.body.removeChild(modal);
-          document.removeEventListener('keydown', escapeHandler);
-        }
-      };
-      document.addEventListener('keydown', escapeHandler);
-      
-      buttonContainer.appendChild(cancelButton);
-      buttonContainer.appendChild(saveButton);
-      
-      dialog.appendChild(title);
-      dialog.appendChild(nameLabel);
-      dialog.appendChild(nameInput);
-      dialog.appendChild(urlLabel);
-      dialog.appendChild(urlInput);
-      dialog.appendChild(newTabContainer);
-      dialog.appendChild(buttonContainer);
-      
-      modal.appendChild(dialog);
-      document.body.appendChild(modal);
-      
-      // Fokus auf Name Input
-      nameInput.focus();
-      nameInput.select();
-    }
-  
-    // ===== OVERLAY-FUNKTIONEN =====
-    function showOverlay() {
-      if (localStorage.getItem(OVERLAY_SEEN_KEY) === 'true') return;
-      
-      overlay = document.createElement('div');
-      overlay.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
-        background-color: rgba(0, 0, 0, 0.85);
-        color: #ffe2a6;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        z-index: 10000;
-        font-family: 'Trajan Pro', 'Times New Roman', serif;
-        font-size: 2em;
-        text-align: center;
-      `;
-      
-      const message = document.createElement('div');
-      message.textContent = t('pressF2');
-      message.style.marginBottom = '20px';
-      
-      const okButton = document.createElement('button');
-      okButton.textContent = 'OK';
-      okButton.style.cssText = `
-        font-size: 1.2em;
-        padding: 15px 25px;
-        background: #3a5a12;
-        color: #ffe2a6;
-        border: 1px solid #5a7a22;
-        border-radius: 6px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
-      
-      okButton.addEventListener('click', () => {
-        if (overlay && overlay.parentNode) {
-          overlay.parentNode.removeChild(overlay);
-        }
-        overlay = null;
-        localStorage.setItem(OVERLAY_SEEN_KEY, 'true');
-      });
-      
-      overlay.appendChild(message);
-      overlay.appendChild(okButton);
-      document.body.appendChild(overlay);
-    }
-  
-    // ===== MENÜ-VERWALTUNG =====
-    function loadMenuSettings() {
-      try {
-        const settings = localStorage.getItem(STORAGE_KEY);
-        return settings ? JSON.parse(settings) : {};
-      } catch (e) {
-        console.error('[BiteFight] Error loading menu settings:', e);
-        return {};
-      }
-    }
-  
-    function saveMenuSettings(settings) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-        menuSettings = settings;
-        saveAndReload(t('menuSettingsSaved'));
-      } catch (e) {
-        console.error('[BiteFight] Error saving menu settings:', e);
-      }
-    }
-  
-    function applyMenuSettings(menu, settings) {
-      if (!menu || !settings) return;
-      
-      const menuItems = menu.querySelectorAll('li');
-      menuItems.forEach((item, index) => {
-        // Skip custom menu items und Zeit-Element
-        if (item.classList.contains('custom-menu-item') || item.id?.includes('time')) return;
-        
-        const setting = settings[`menu-item-${index}`];
-        if (setting !== undefined) {
-          item.style.display = setting ? 'block' : 'none';
-        }
-      });
-      
-      console.log('[BiteFight] Menu settings applied:', settings);
-    }
-  
-    // ===== FLAGGEN-AUSWAHL WIDGET =====
-    function createLanguageFlags() {
-      const flagContainer = document.createElement('div');
-      flagContainer.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 2px;
-        margin-left: 10px;
-      `;
-      
-      // Deutsche Flagge
-      const germanFlag = document.createElement('button');
-      germanFlag.className = `language-flag-btn ${currentLanguage === 'de' ? 'active' : ''}`;
-      germanFlag.innerHTML = '🇩🇪';
-      germanFlag.title = 'Deutsch';
-      germanFlag.addEventListener('click', () => {
-        if (currentLanguage !== 'de') {
-          saveLanguage('de');
-        }
-      });
-      
-      // Englische Flagge
-      const englishFlag = document.createElement('button');
-      englishFlag.className = `language-flag-btn ${currentLanguage === 'en' ? 'active' : ''}`;
-      englishFlag.innerHTML = '🇺🇸';
-      englishFlag.title = 'English';
-      englishFlag.addEventListener('click', () => {
-        if (currentLanguage !== 'en') {
-          saveLanguage('en');
-        }
-      });
-      
-      flagContainer.appendChild(germanFlag);
-      flagContainer.appendChild(englishFlag);
-      
-      return flagContainer;
-    }
-  
-    // ===== SETTINGS-BUTTON WIDGET =====
-    function createSettingsButton() {
-      const settingsBtn = document.createElement('button');
-      settingsBtn.className = 'settings-btn';
-      settingsBtn.innerHTML = '⚙️';
-      settingsBtn.title = t('advancedSettings');
-      settingsBtn.addEventListener('click', createSettingsWindow);
-      
-      return settingsBtn;
-    }
-  
-    // ===== TAB-VERWALTUNG =====
-    function createTabContent(tabIndex, menu) {
-      const content = document.createElement('div');
-      content.style.cssText = `
-        max-height: 400px;
-        overflow-y: auto;
-        margin-bottom: 15px;
-      `;
-      
-      if (tabIndex === 1) {
-        // Tab 1: Menü Ein/Aus
-        const menuItems = menu.querySelectorAll('li');
-        menuItems.forEach((item, index) => {
-          // Skip custom menu items und Zeit-Element
-          if (item.classList.contains('custom-menu-item') || item.id?.includes('time')) return;
-          
-          const link = item.querySelector('a');
-          if (!link) return;
-          
-          const itemContainer = document.createElement('div');
-          itemContainer.style.cssText = `
-            display: flex;
-            align-items: center;
-            margin-bottom: 8px;
-            padding: 5px;
-            background: rgba(139, 69, 19, 0.3);
-            border-radius: 5px;
-          `;
-          
-          const checkbox = document.createElement('input');
-          checkbox.type = 'checkbox';
-          checkbox.id = `menu-item-${index}`;
-          checkbox.checked = menuSettings[`menu-item-${index}`] !== false;
-          checkbox.style.marginRight = '10px';
-          
-          const label = document.createElement('label');
-          label.htmlFor = `menu-item-${index}`;
-          label.textContent = link.textContent.trim() || `Menüpunkt ${index + 1}`;
-          label.style.cssText = `
-            color: #ffe2a6;
-            cursor: pointer;
-            flex: 1;
-          `;
-          
-          checkbox.addEventListener('change', () => {
-            const newSettings = { ...menuSettings };
-            newSettings[`menu-item-${index}`] = checkbox.checked;
-            saveMenuSettings(newSettings);
-          });
-          
-          itemContainer.appendChild(checkbox);
-          itemContainer.appendChild(label);
-          content.appendChild(itemContainer);
-        });
-        
-      } else if (tabIndex === 2) {
-        // Tab 2: Custom Buttons hinzufügen/verwalten
-        const addButtonSection = document.createElement('div');
-        addButtonSection.style.marginBottom = '20px';
-        
-        const sectionTitle = document.createElement('h4');
-        sectionTitle.textContent = t('addNewButton');
-        sectionTitle.style.cssText = `
-          color: #ffe2a6;
-          margin: 0 0 10px 0;
-          font-size: 1.1em;
-        `;
-        
-        const nameInput = document.createElement('input');
-        nameInput.type = 'text';
-        nameInput.placeholder = t('buttonName');
-        nameInput.style.cssText = `
-          width: 70%;
-          padding: 8px;
-          margin-bottom: 8px;
-          background: rgba(139, 69, 19, 0.3);
-          border: 1px solid #8b4513;
-          border-radius: 4px;
-          color: #ffe2a6;
-          font-size: 14px;
-        `;
-        
-        const urlInput = document.createElement('input');
-        urlInput.type = 'url';
-        urlInput.placeholder = t('buttonUrl');
-        urlInput.style.cssText = `
-          width: 70%;
-          padding: 8px;
-          margin-bottom: 8px;
-          background: rgba(139, 69, 19, 0.3);
-          border: 1px solid #8b4513;
-          border-radius: 4px;
-          color: #ffe2a6;
-          font-size: 14px;
-        `;
-        
-        const newTabContainer = document.createElement('div');
-        newTabContainer.style.cssText = `
-          display: flex;
-          align-items: center;
-          margin-bottom: 10px;
-        `;
-        
-        const newTabCheckbox = document.createElement('input');
-        newTabCheckbox.type = 'checkbox';
-        newTabCheckbox.id = 'newTabCheckbox';
-        newTabCheckbox.checked = false; // Standardmäßig NICHT in neuem Tab
-        newTabCheckbox.style.marginRight = '8px';
-        
-        const newTabLabel = document.createElement('label');
-        newTabLabel.htmlFor = 'newTabCheckbox';
-        newTabLabel.textContent = t('openInNewTab');
-        newTabLabel.style.cssText = `
-          color: #ffe2a6;
-          cursor: pointer;
-          font-size: 14px;
-        `;
-        
-        newTabContainer.appendChild(newTabCheckbox);
-        newTabContainer.appendChild(newTabLabel);
-        
-        const addButton = document.createElement('button');
-        addButton.textContent = t('addButton');
-        addButton.style.cssText = `
-          width: 100%;
-          margin-bottom: 20px;
-          padding: 10px;
-          background: #3a5a12;
-          color: #ffe2a6;
-          border: 1px solid #5a7a22;
-          border-radius: 6px;
-          cursor: pointer;
-          font-weight: bold;
-        `;
-        
-        addButton.addEventListener('click', () => {
-          const name = nameInput.value.trim();
-          const url = urlInput.value.trim();
-          
-          if (name && url) {
-            const newButton = {
-              name: name,
-              url: url,
-              newTab: newTabCheckbox.checked
-            };
-            
-            customButtons.push(newButton);
-            saveCustomButtons(customButtons);
-            
-            // Input-Felder leeren
-            nameInput.value = '';
-            urlInput.value = '';
-            newTabCheckbox.checked = false;
-            
-            // Button-Liste aktualisieren
-            updateButtonList();
-          } else {
-            alert(t('pleaseEnterNameAndUrl'));
-          }
-        });
-        
-        addButtonSection.appendChild(sectionTitle);
-        addButtonSection.appendChild(nameInput);
-        addButtonSection.appendChild(urlInput);
-        addButtonSection.appendChild(newTabContainer);
-        addButtonSection.appendChild(addButton);
-        content.appendChild(addButtonSection);
-        
-        // Bestehende Buttons verwalten
-        const manageSection = document.createElement('div');
-        const manageSectionTitle = document.createElement('h4');
-        manageSectionTitle.textContent = t('manageExistingButtons');
-        manageSectionTitle.style.cssText = `
-          color: #ffe2a6;
-          margin: 0 0 10px 0;
-          font-size: 1.1em;
-        `;
-        
-        const buttonList = document.createElement('div');
-        buttonList.id = 'buttonManageList';
-        
-        function updateButtonList() {
-          buttonList.innerHTML = '';
-          
-          if (customButtons.length === 0) {
-            const emptyMsg = document.createElement('div');
-            emptyMsg.textContent = t('noButtonsAvailable');
-            emptyMsg.style.cssText = `
-              color: #ffe2a6;
-              text-align: center;
-              font-style: italic;
-              padding: 20px;
-            `;
-            buttonList.appendChild(emptyMsg);
-            return;
-          }
-          
-          customButtons.forEach((button, index) => {
-            const buttonItem = document.createElement('div');
-            buttonItem.style.cssText = `
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              padding: 8px;
-              margin-bottom: 5px;
-              background: rgba(139, 69, 19, 0.3);
-              border-radius: 5px;
-            `;
-            
-            const buttonInfo = document.createElement('div');
-            buttonInfo.style.flex = '1';
-            
-            const buttonName = document.createElement('div');
-            buttonName.textContent = button.name;
-            buttonName.style.cssText = `
-              color: #ffe2a6;
-              font-weight: bold;
-              margin-bottom: 2px;
-            `;
-            
-            const buttonDetails = document.createElement('div');
-            buttonDetails.style.cssText = `
-              color: #cccccc;
-              font-size: 12px;
-              word-break: break-all;
-            `;
-            buttonDetails.innerHTML = `
-              <div>${button.url}</div>
-              <div style="margin-top: 2px; color: ${button.newTab ? '#90EE90' : '#FFB6C1'};">
-                ${button.newTab ? '🗗 ' + t('newTab') : '🗔 ' + t('sameTab')}
-              </div>
-            `;
-            
-            buttonInfo.appendChild(buttonName);
-            buttonInfo.appendChild(buttonDetails);
-            
-            const buttonActions = document.createElement('div');
-            buttonActions.style.cssText = `
-              display: flex;
-              gap: 5px;
-              margin-left: 10px;
-            `;
-            
-            const editButton = document.createElement('button');
-            editButton.textContent = '✎';
-            editButton.style.cssText = `
-              background: #3a5a12;
-              color: white;
-              border: none;
-              border-radius: 3px;
-              width: 25px;
-              height: 25px;
-              cursor: pointer;
-              font-weight: bold;
-            `;
-            
-            editButton.addEventListener('click', () => {
-              createEditDialog(button, index, (editedButton) => {
-                customButtons[index] = editedButton;
-                saveCustomButtons(customButtons);
+              items.push({
+                  id: stableId,
+                  text: link.textContent.trim(),
+                  element: link,
+                  liElement: li,
+                  href: href,
+                  isCustom: false
               });
-            });
-            
-            const deleteButton = document.createElement('button');
-            deleteButton.textContent = '✕';
-            deleteButton.style.cssText = `
-              background: #8b1538;
-              color: white;
-              border: none;
-              border-radius: 3px;
-              width: 25px;
-              height: 25px;
-              cursor: pointer;
-              font-weight: bold;
-            `;
-            
-            deleteButton.addEventListener('click', () => {
-              if (confirm(t('confirmDelete', button.name))) {
-                customButtons.splice(index, 1);
-                saveCustomButtons(customButtons);
+          }
+      });
+      
+      console.log('[BiteFight] Found standard menu items:', items.map(item => `${item.text} (${item.id})`));
+      return items;
+  }
+  
+  // ===== MENÜ-ELEMENTE VERSTECKEN/ANZEIGEN =====
+  
+  function applyMenuSettings() {
+      const menu = document.querySelector('#menuHead');
+      if (!menu) return;
+      
+      const menuItems = getMenuItems();
+      
+      menuItems.forEach(item => {
+          const isVisible = menuSettings[item.id] !== false;
+          if (item.element && item.element.closest) {
+              const li = item.element.closest('li');
+              if (li) {
+                  li.style.display = isVisible ? '' : 'none';
               }
-            });
-            
-            buttonActions.appendChild(editButton);
-            buttonActions.appendChild(deleteButton);
-            buttonItem.appendChild(buttonInfo);
-            buttonItem.appendChild(buttonActions);
-            buttonList.appendChild(buttonItem);
-          });
-        }
-        
-        updateButtonList();
-        
-        manageSection.appendChild(manageSectionTitle);
-        manageSection.appendChild(buttonList);
-        content.appendChild(manageSection);
-        
-      } else if (tabIndex === 3) {
-        // Tab 3: Verbesserte Sortierung
-        const sortingInfo = document.createElement('div');
-        sortingInfo.style.cssText = `
-          background: rgba(139, 69, 19, 0.3);
-          padding: 15px;
-          border-radius: 8px;
-          margin-bottom: 20px;
-        `;
-        
-        const infoTitle = document.createElement('h4');
-        infoTitle.textContent = t('menuSorting');
-        infoTitle.style.cssText = `
-          color: #ffe2a6;
-          margin: 0 0 10px 0;
-          font-size: 1.2em;
-        `;
-        
-        const infoText = document.createElement('div');
-        infoText.innerHTML = `
-          <p style="color: #ffe2a6; margin-bottom: 10px;">
-            ${t('sortingDescription')}
-          </p>
-          <p style="color: #ffe2a6; margin-bottom: 10px;">
-            ${t('autoSaveNote')}
-          </p>
-          <p style="color: #ffe2a6; margin-bottom: 0;">
-            • <strong>${t('upArrow')}</strong> • <strong>${t('downArrow')}</strong>
-          </p>
-        `;
-        
-        sortingInfo.appendChild(infoTitle);
-        sortingInfo.appendChild(infoText);
-        content.appendChild(sortingInfo);
-        
-        // Reset-Buttons
-        const resetContainer = document.createElement('div');
-        resetContainer.style.cssText = `
-          display: flex;
-          gap: 10px;
-          margin-bottom: 20px;
-        `;
-        
-        const resetStandardButton = document.createElement('button');
-        resetStandardButton.textContent = t('standardReset');
-        resetStandardButton.style.cssText = `
-          flex: 1;
-          padding: 8px;
-          background: #8b1538;
-          color: #ffe2a6;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          font-weight: bold;
-        `;
-        
-        const resetCustomButton = document.createElement('button');
-        resetCustomButton.textContent = t('customReset');
-        resetCustomButton.style.cssText = `
-          flex: 1;
-          padding: 8px;
-          background: #8b1538;
-          color: #ffe2a6;
-          border: none;
-          border-radius: 6px;
-          cursor: pointer;
-          font-weight: bold;
-        `;
-        
-        resetStandardButton.addEventListener('click', () => {
-          if (confirm(t('confirmStandardReset'))) {
-            localStorage.removeItem(MENU_ORDER_KEY);
-            menuOrder = [];
-            saveAndReload(t('standardOrderReset'));
           }
-        });
-        
-        resetCustomButton.addEventListener('click', () => {
-          if (confirm(t('confirmCustomReset'))) {
-            localStorage.removeItem(CUSTOM_ORDER_KEY);
-            customOrder = [];
-            saveAndReload(t('customOrderReset'));
+      });
+      
+      console.log('[BiteFight] Menu settings applied');
+  }
+  
+  function applyCustomButtonSettings() {
+      const menu = document.querySelector('#menuHead');
+      if (!menu) return;
+      
+      const customMenuItems = menu.querySelectorAll('.custom-menu-item');
+      
+      customMenuItems.forEach((menuItem, index) => {
+          if (customButtons[index]) {
+              const isVisible = customButtons[index].enabled !== false;
+              menuItem.style.display = isVisible ? '' : 'none';
           }
-        });
-        
-        resetContainer.appendChild(resetStandardButton);
-        resetContainer.appendChild(resetCustomButton);
-        content.appendChild(resetContainer);
-        
-        // Standard-Menü sortieren
-        const standardSection = document.createElement('div');
-        standardSection.style.marginBottom = '20px';
-        
-        const standardTitle = document.createElement('h4');
-        standardTitle.textContent = t('sortStandardMenuItems');
-        standardTitle.style.cssText = `
-          color: #ffe2a6;
-          margin: 0 0 10px 0;
-          font-size: 1.1em;
-        `;
-        
-        const standardList = document.createElement('div');
-        standardList.id = 'standardSortList';
-        standardList.style.cssText = `
-          background: rgba(139, 69, 19, 0.2);
-          padding: 10px;
-          border-radius: 5px;
-          max-height: 200px;
-          overflow-y: auto;
-          margin-bottom: 20px;
-        `;
-        
-        // Custom-Menü sortieren
-        const customSection = document.createElement('div');
-        
-        const customTitle = document.createElement('h4');
-        customTitle.textContent = t('sortCustomButtons');
-        customTitle.style.cssText = `
-          color: #ffe2a6;
-          margin: 0 0 10px 0;
-          font-size: 1.1em;
-        `;
-        
-        const customList = document.createElement('div');
-        customList.id = 'customSortList';
-        customList.style.cssText = `
-          background: rgba(139, 69, 19, 0.2);
-          padding: 10px;
-          border-radius: 5px;
-          max-height: 200px;
-          overflow-y: auto;
-        `;
-        
-        function moveStandardItem(fromIndex, toIndex, items) {
-          if (toIndex < 0 || toIndex >= items.length) return;
-          
-          const movedItem = items.splice(fromIndex, 1)[0];
-          items.splice(toIndex, 0, movedItem);
-          
-          const newOrder = items.map(item => item.id);
-          saveMenuOrder(newOrder); // Automatisches Speichern + Reload
-        }
-        
-        function moveCustomItem(fromIndex, toIndex) {
-          if (toIndex < 0 || toIndex >= customButtons.length) return;
-          
-          const movedButton = customButtons.splice(fromIndex, 1)[0];
-          customButtons.splice(toIndex, 0, movedButton);
-          
-          const newOrder = customButtons.map(btn => `custom-${btn.name.replace(/\s+/g, '-')}`);
-          saveCustomOrder(newOrder); // Automatisches Speichern + Reload
-        }
-        
-        function updateSortableLists() {
-          // Standard-Liste aktualisieren
-          standardList.innerHTML = '';
-          const standardItems = extractStandardMenuItems(menu);
-          
-          let sortedStandardItems = [...standardItems];
-          if (menuOrder.length > 0) {
-            sortedStandardItems = [];
-            menuOrder.forEach(orderId => {
-              const item = standardItems.find(i => i.id === orderId);
-              if (item) sortedStandardItems.push(item);
-            });
-            standardItems.forEach(item => {
-              if (!menuOrder.includes(item.id)) {
-                sortedStandardItems.push(item);
+      });
+      
+      console.log('[BiteFight] Custom button settings applied');
+  }
+  
+  // ===== UI-FUNKTIONEN =====
+
+  function createSettingsUI() {
+    // Erstelle Hintergrund-Overlay das nur den Inhalt verschwimmt, nicht das Menü
+    const overlay = document.createElement('div');
+    overlay.className = 'bitefight-ui-overlay';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    `;
+    
+    const ui = document.createElement('div');
+    ui.className = 'bitefight-ui';
+      ui.style.cssText = `
+          position: relative;
+          font-family: 'Trajan Pro', 'Times New Roman', serif;
+          width: 580px;
+          max-height: 80vh;
+          overflow: hidden;
+          backdrop-filter: blur(50px);
+          z-index: 1;
+      `;
+
+      ui.innerHTML = `
+          <div class="bitefight-ui-header" style="padding: 15px; border-radius: 8px 8px 0 0;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <h2 style="margin: 0; font-size: 18px; text-shadow: 2px 2px 4px rgba(0,0,0,0.8);" class="bitefight-text-primary">
+                      🦇 ${t('title')}
+                  </h2>
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                      <span class="language-flag-btn ${currentLanguage === 'de' ? 'active' : ''}" data-lang="de">🇩🇪</span>
+                      <span class="language-flag-btn ${currentLanguage === 'en' ? 'active' : ''}" data-lang="en">🇺🇸</span>
+                      <span class="info-btn" data-action="show-info" title="Informationen">ℹ️</span>
+                      <span class="settings-btn" data-action="advanced-settings">⚙️</span>
+                      <span style="cursor: pointer; font-size: 24px; line-height: 1;" class="bitefight-text-danger" data-action="close">×</span>
+                  </div>
+              </div>
+          </div>
+          <div class="bitefight-ui-content" style="padding: 0; max-height: calc(80vh - 80px); overflow-y: auto;">
+              <div style="display: flex;">
+                  <button class="bitefight-tab-btn" data-tab="1" style="flex: 1; padding: 12px; border: none; cursor: pointer; font-family: inherit;">${t('tabToggle')}</button>
+                  <button class="bitefight-tab-btn active" data-tab="2" style="flex: 1; padding: 12px; border: none; cursor: pointer; font-family: inherit;">${t('tabCustom')}</button>
+                  <button class="bitefight-tab-btn" data-tab="3" style="flex: 1; padding: 12px; border: none; cursor: pointer; font-family: inherit;">${t('tabSorting')}</button>
+              </div>
+              <div class="tab-content" id="tab1" style="display: none; padding: 20px;">
+                  ${createToggleTabContent()}
+              </div>
+              <div class="tab-content" id="tab2" style="display: block; padding: 20px;">
+                  ${createCustomTabContent()}
+              </div>
+              <div class="tab-content" id="tab3" style="display: none; padding: 20px;">
+                  ${createSortingTabContent()}
+              </div>
+          </div>
+      `;
+
+      // Füge UI zum Overlay hinzu
+      overlay.appendChild(ui);
+
+      // Event Listeners
+      const tabBtns = ui.querySelectorAll('.bitefight-tab-btn');
+      tabBtns.forEach(btn => {
+          btn.addEventListener('click', (e) => switchTab(e.target.dataset.tab, ui));
+      });
+
+      const langBtns = ui.querySelectorAll('.language-flag-btn');
+      langBtns.forEach(btn => {
+          btn.addEventListener('click', (e) => {
+              const lang = e.target.dataset.lang;
+              if (lang !== currentLanguage) {
+                  saveLanguage(lang);
               }
-            });
-          }
-          
-          sortedStandardItems.forEach((item, index) => {
-            const sortItem = createSortableItem(item.text, index, sortedStandardItems.length, 'standard', 
-              () => moveStandardItem(index, index - 1, sortedStandardItems),
-              () => moveStandardItem(index, index + 1, sortedStandardItems)
-            );
-            standardList.appendChild(sortItem);
           });
-          
-          // Custom-Liste aktualisieren
-          customList.innerHTML = '';
-          if (customButtons.length === 0) {
-            const emptyMsg = document.createElement('div');
-            emptyMsg.textContent = t('noCustomButtonsAvailable');
-            emptyMsg.style.cssText = `
-              color: #ffe2a6;
-              text-align: center;
-              font-style: italic;
-              padding: 20px;
-            `;
-            customList.appendChild(emptyMsg);
-          } else {
-            customButtons.forEach((button, index) => {
-              const sortItem = createSortableItem(button.name, index, customButtons.length, 'custom',
-                () => moveCustomItem(index, index - 1),
-                () => moveCustomItem(index, index + 1)
-              );
-              customList.appendChild(sortItem);
-            });
+      });
+
+      // Schließe UI beim Klick auf Overlay (außerhalb der UI)
+      overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) {
+              closeUI();
           }
+      });
+
+      ui.addEventListener('click', (e) => {
+          if (e.target.dataset.action === 'close') {
+              closeUI();
+          } else if (e.target.dataset.action === 'advanced-settings') {
+              openAdvancedSettings();
+          } else if (e.target.dataset.action === 'show-info') {
+              showInfoDialog();
+          }
+      });
+
+      return overlay;
+  }
+  
+  function showInfoDialog() {
+    // Erstelle Information Dialog mit Overlay und Blur-Effekt
+    const infoOverlay = document.createElement('div');
+    infoOverlay.className = 'bitefight-ui-overlay info-dialog';
+    infoOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.8);
+        z-index: 10003;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        font-family: 'Trajan Pro', 'Times New Roman', serif;
+    `;
+    
+    const dialog = document.createElement('div');
+    dialog.className = 'bitefight-ui';
+    dialog.style.cssText = `
+        position: relative;
+        z-index: 1;
+        padding: 25px;
+        max-width: 500px;
+        margin: 20px;
+        border-radius: 12px;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
+    `;
+    
+    dialog.innerHTML = `
+        <h3 style="margin: 0 0 20px 0; text-align: center; font-size: 18px;" class="bitefight-text-danger">
+            💀 Information
+        </h3>
+        <div style="line-height: 1.6; font-size: 13px; margin-bottom: 20px;" class="bitefight-text-secondary">
+            <p style="margin: 0 0 15px 0;">
+                <strong class="bitefight-text-primary">Rechtlicher Hinweis:</strong><br>
+                Alle in diesem Script verwendeten Grafiken und visuellen Elemente sind Eigentum von GameForge und werden nur temporär clientseitig angezeigt.
+            </p>
+            <p style="margin: 0 0 15px 0;">
+                <strong class="bitefight-text-primary">Technische Information:</strong><br>
+                Dieses Script führt ausschließlich clientseitige Änderungen durch und gewährt dem Spieler keinen unfairen Vorteil. Es werden keine serverseitigen Daten verändert oder manipuliert.
+            </p>
+            <p style="margin: 0;">
+                <strong class="bitefight-text-primary">Verwendungszweck:</strong><br>
+                Das Script dient ausschließlich der Verbesserung der Benutzerfreundlichkeit und Personalisierung der Spieloberfläche.
+            </p>
+        </div>
+        <div style="text-align: center;">
+            <button data-action="close-info" class="bitefight-btn" style="
+                padding: 12px 24px; 
+                cursor: pointer; 
+                font-family: inherit; 
+                font-weight: bold;
+                font-size: 14px;
+                border-radius: 6px;
+                transition: all 0.3s ease;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            ">🗡️ Verstanden</button>
+        </div>
+      `;
+      
+      // Füge Dialog zum Overlay hinzu
+      infoOverlay.appendChild(dialog);
+      
+      // Füge Overlay zum Body hinzu
+      document.body.appendChild(infoOverlay);
+      
+      // Schließe Dialog beim Klick auf Overlay (außerhalb des Dialogs)
+      infoOverlay.addEventListener('click', (e) => {
+          if (e.target === infoOverlay) {
+              infoOverlay.remove();
+          }
+      });
+      
+      // Schließe Dialog beim Klick auf Button
+      dialog.addEventListener('click', (e) => {
+          if (e.target.dataset.action === 'close-info') {
+              infoOverlay.remove();
+          }
+      });
+      
+      console.log('[BiteFight] Info dialog opened with blur and scroll prevention');
+  }
+  
+  function createToggleTabContent() {
+      return `
+          <div style="text-align: center; margin-bottom: 20px;">
+              <button id="allOnBtn" class="bitefight-btn" style="
+                  padding: 12px 20px; 
+                  margin: 5px; 
+                  cursor: pointer; 
+                  font-family: inherit; 
+                  font-weight: bold;
+                  border-radius: 6px;
+                  transition: all 0.3s ease;
+                  text-transform: uppercase;
+                  letter-spacing: 0.5px;
+              ">⚡ ${t('allOn')}</button>
+              <button id="allOffBtn" class="bitefight-btn-danger" style="
+                  padding: 12px 20px; 
+                  margin: 5px; 
+                  cursor: pointer; 
+                  font-family: inherit; 
+                  font-weight: bold;
+                  border-radius: 6px;
+                  transition: all 0.3s ease;
+                  text-transform: uppercase;
+                  letter-spacing: 0.5px;
+              ">💀 ${t('allOff')}</button>
+          </div>
+          <div id="menuToggleContainer" class="bitefight-container" style="
+              border-radius: 8px; 
+              padding: 15px;
+              margin-top: 10px;
+          "></div>
+      `;
+  }
+  
+  function createCustomTabContent() {
+      return `
+          <div class="bitefight-container" style="padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+              <h3 style="margin: 0 0 15px 0;" class="bitefight-text-primary">${t('addNewButton')}</h3>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                  <input type="text" id="customButtonName" placeholder="${t('buttonName')}" class="bitefight-input" style="padding: 8px; border-radius: 4px; font-family: inherit;">
+                  <input type="text" id="customButtonUrl" placeholder="${t('buttonUrl')}" class="bitefight-input" style="padding: 8px; border-radius: 4px; font-family: inherit;">
+              </div>
+              <div style="margin-bottom: 10px;">
+                  <label style="display: flex; align-items: center; gap: 8px;" class="bitefight-text-primary">
+                      <input type="checkbox" id="customButtonNewTab" style="accent-color: #5a1a1a;">
+                      ${t('openInNewTab')}
+                  </label>
+              </div>
+              <div style="margin-bottom: 10px;">
+                  <label style="display: block; margin-bottom: 5px;" class="bitefight-text-primary">Position:</label>
+                  <select id="customButtonPosition" class="bitefight-input" style="padding: 8px; border-radius: 4px; font-family: inherit; width: 100%;">
+                      <option value="after-time">Nach Uhrzeit (Standard)</option>
+                      <option value="between-standard">Zwischen Standard-Menü</option>
+                  </select>
+              </div>
+              <button id="addCustomButton" class="bitefight-btn" style="padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: inherit; width: 100%;">${t('addButton')}</button>
+          </div>
+          
+          <div class="bitefight-container" style="padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+              <h3 style="margin: 0 0 15px 0;" class="bitefight-text-primary">${t('toggleCustomButtons')}</h3>
+              <div id="customButtonToggleContainer"></div>
+          </div>
+          
+          <div>
+              <h3 style="margin: 0 0 15px 0;" class="bitefight-text-primary">${t('manageExistingButtons')}</h3>
+              <div id="customButtonsList"></div>
+          </div>
+      `;
+  }
+  
+  function createSortingTabContent() {
+      return `
+          <div style="margin-bottom: 20px;">
+              <h3 style="margin: 0 0 10px 0;" class="bitefight-text-primary">${t('menuSorting')}</h3>
+              <p style="margin: 0 0 15px 0; font-size: 12px;" class="bitefight-text-secondary">${t('sortingDescription')}</p>
+              <div class="bitefight-container" style="padding: 10px; border-radius: 6px; margin-bottom: 15px;">
+                  <p style="margin: 0; font-size: 11px; font-weight: bold;" class="bitefight-text-warning">${t('autoSaveNote')}</p>
+              </div>
+              <div style="display: flex; gap: 10px; margin-bottom: 15px; font-size: 11px;" class="bitefight-text-secondary">
+                  <span>${t('upArrow')}</span>
+                  <span>${t('downArrow')}</span>
+              </div>
+          </div>
+          
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+              <div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                      <h4 style="margin: 0;" class="bitefight-text-primary">${t('sortStandardMenuItems')}</h4>
+                      <button id="resetStandardOrder" class="bitefight-btn-danger" style="padding: 4px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 10px;">${t('standardReset')}</button>
+                  </div>
+                  <div id="standardMenuSorting" class="bitefight-container" style="border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto;"></div>
+              </div>
+              
+              <div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                      <h4 style="margin: 0;" class="bitefight-text-primary">${t('sortCustomButtons')}</h4>
+                      <button id="resetCustomOrder" class="bitefight-btn-danger" style="padding: 4px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 10px;">${t('customReset')}</button>
+                  </div>
+                  <div id="customButtonSorting" class="bitefight-container" style="border-radius: 6px; padding: 10px; max-height: 200px; overflow-y: auto;"></div>
+              </div>
+          </div>
+      `;
+  }
+
+  // ===== KORRIGIERTE ERWEITERTE EINSTELLUNGEN UI =====
+
+  function openAdvancedSettings() {
+    // Verstecke das Hauptfenster
+    if (uiContainer) {
+        uiContainer.style.display = 'none';
+    }
+    
+    // Erstelle Advanced Settings mit Overlay und Blur-Effekt
+    const advancedOverlay = document.createElement('div');
+    advancedOverlay.className = 'bitefight-ui-overlay';
+    advancedOverlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 10001;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    `;
+    
+    const settingsUI = document.createElement('div');
+    settingsUI.className = 'bitefight-ui';
+    settingsUI.style.cssText = `
+        position: relative;
+        z-index: 1;
+        font-family: 'Trajan Pro', 'Times New Roman', serif;
+        width: 550px;
+        max-height: 80vh;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
+    `;
+
+    settingsUI.innerHTML = `
+        <div class="bitefight-ui-header" style="padding: 15px; border-radius: 8px 8px 0 0;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2 style="margin: 0; font-size: 18px; text-shadow: 2px 2px 4px rgba(0,0,0,0.8);" class="bitefight-text-primary">
+                    ⚙️ ${t('advancedSettings')}
+                </h2>
+                <span style="cursor: pointer; font-size: 24px; line-height: 1;" class="bitefight-text-danger" data-action="close-advanced">×</span>
+            </div>
+        </div>
+        
+        <div style="padding: 0; max-height: calc(80vh - 80px); overflow-y: auto;">
+            <div style="padding: 20px 25px 0 25px;">
+                <h3 style="margin: 0 0 20px 0; font-size: 16px; text-align: center; border-bottom: 2px solid #5a1a1a; padding-bottom: 10px;" class="bitefight-text-primary">
+                    ${t('gameElementsSettings')}
+                </h3>
+            </div>
+            
+            <div style="padding: 0 25px 20px 25px;">
+                <div class="bitefight-container" style="border-radius: 8px; margin-bottom: 12px; overflow: hidden;">
+                    <label style="display: flex; align-items: flex-start; gap: 15px; padding: 18px; cursor: pointer; transition: background 0.2s ease;" 
+                           onmouseover="this.style.background='rgba(42, 16, 16, 0.7)'" 
+                           onmouseout="this.style.background=''">
+                        <input type="checkbox" id="showEventNotifications" ${advancedSettings.showEventNotifications ? 'checked' : ''} 
+                               style="accent-color: #5a1a1a; margin-top: 2px; transform: scale(1.3); cursor: pointer;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;" class="bitefight-text-primary">
+                                ${t('showEventNotifications')}
+                            </div>
+                            <p style="margin: 0; font-size: 12px; line-height: 1.5; opacity: 0.9;" class="bitefight-text-secondary">
+                                ${t('eventNotificationsDesc')}
+                            </p>
+                        </div>
+                    </label>
+                </div>
+                
+                <div class="bitefight-container" style="border-radius: 8px; margin-bottom: 12px; overflow: hidden;">
+                    <label style="display: flex; align-items: flex-start; gap: 15px; padding: 18px; cursor: pointer; transition: background 0.2s ease;" 
+                           onmouseover="this.style.background='rgba(42, 16, 16, 0.7)'" 
+                           onmouseout="this.style.background=''">
+                        <input type="checkbox" id="showShadowlordNotifications" ${advancedSettings.showShadowlordNotifications ? 'checked' : ''} 
+                               style="accent-color: #5a1a1a; margin-top: 2px; transform: scale(1.3); cursor: pointer;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;" class="bitefight-text-primary">
+                                ${t('showShadowlordNotifications')}
+                            </div>
+                            <p style="margin: 0; font-size: 12px; line-height: 1.5; opacity: 0.9;" class="bitefight-text-secondary">
+                                ${t('shadowlordNotificationsDesc')}
+                            </p>
+                        </div>
+                    </label>
+                </div>
+                
+                <div class="bitefight-container" style="border-radius: 8px; margin-bottom: 20px; overflow: hidden;">
+                    <label style="display: flex; align-items: flex-start; gap: 15px; padding: 18px; cursor: pointer; transition: background 0.2s ease;" 
+                           onmouseover="this.style.background='rgba(42, 16, 16, 0.7)'" 
+                           onmouseout="this.style.background=''">
+                        <input type="checkbox" id="showGameForgeTaskbar" ${advancedSettings.showGameForgeTaskbar ? 'checked' : ''} 
+                               style="accent-color: #5a1a1a; margin-top: 2px; transform: scale(1.3); cursor: pointer;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;" class="bitefight-text-primary">
+                                ${t('showGameForgeTaskbar')}
+                            </div>
+                            <p style="margin: 0; font-size: 12px; line-height: 1.5; opacity: 0.9;" class="bitefight-text-secondary">
+                                ${t('gameForgeTaskbarDesc')}
+                            </p>
+                        </div>
+                    </label>
+                </div>
+            </div>
+            
+            <div style="background: rgba(26, 10, 10, 0.3); border-top: 2px solid #5a1a1a; padding: 20px 25px;">
+                <div style="display: flex; flex-direction: column; gap: 12px; align-items: stretch;">
+                    <button id="saveAdvancedSettings" class="bitefight-btn" style="
+                        padding: 14px 20px; 
+                        border-radius: 8px; 
+                        cursor: pointer; 
+                        font-family: inherit; 
+                        font-weight: bold; 
+                        font-size: 14px;
+                        transition: all 0.15s ease;
+                        text-align: center;
+                        letter-spacing: 0.5px;
+                    ">${t('save')}</button>
+                    
+                    <button id="resetAdvancedSettings" class="bitefight-btn-danger" style="
+                        padding: 14px 20px; 
+                        border-radius: 8px; 
+                        cursor: pointer; 
+                        font-family: inherit; 
+                        font-weight: bold; 
+                        font-size: 14px;
+                        transition: all 0.15s ease;
+                        text-align: center;
+                        letter-spacing: 0.5px;
+                    ">${t('resetToDefaults')}</button>
+                    
+                    <button data-action="close-advanced" class="bitefight-btn" style="
+                        padding: 14px 20px; 
+                        border-radius: 8px; 
+                        cursor: pointer; 
+                        font-family: inherit; 
+                        font-weight: bold; 
+                        font-size: 14px;
+                        transition: all 0.15s ease;
+                        text-align: center;
+                        letter-spacing: 0.5px;
+                        background: linear-gradient(to bottom, #4a4a4a 0%, #2a2a2a 50%, #1a1a1a 100%) !important;
+                        border-color: #5a5a5a !important;
+                    ">${t('close')}</button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Füge Settings UI zum Overlay hinzu
+    advancedOverlay.appendChild(settingsUI);
+    
+    // Füge Overlay zum Body hinzu
+    document.body.appendChild(advancedOverlay);
+    settingsWindow = advancedOverlay; // Speichere das Overlay, nicht nur die Settings UI
+
+    // Event Listeners
+    const saveBtn = settingsUI.querySelector('#saveAdvancedSettings');
+    const resetBtn = settingsUI.querySelector('#resetAdvancedSettings');
+
+    saveBtn.addEventListener('click', () => {
+        const newSettings = {
+            showEventNotifications: settingsUI.querySelector('#showEventNotifications').checked,
+            showShadowlordNotifications: settingsUI.querySelector('#showShadowlordNotifications').checked,
+            showGameForgeTaskbar: settingsUI.querySelector('#showGameForgeTaskbar').checked
+        };
+        saveAdvancedSettings(newSettings);
+    });
+
+    resetBtn.addEventListener('click', () => {
+        if (confirm(t('confirmResetDefaults'))) {
+            const defaultSettings = {
+                showEventNotifications: true,
+                showShadowlordNotifications: true,
+                showGameForgeTaskbar: true
+            };
+            saveAdvancedSettings(defaultSettings);
         }
-        
-        function createSortableItem(text, index, totalCount, type, moveUpCallback, moveDownCallback) {
-          const sortItem = document.createElement('div');
-          sortItem.style.cssText = `
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 8px;
-            margin-bottom: 3px;
-            background: rgba(139, 69, 19, 0.3);
-            border-radius: 3px;
-          `;
-          
-          const itemInfo = document.createElement('div');
-          itemInfo.style.cssText = `
-            display: flex;
-            align-items: center;
-            flex: 1;
-          `;
-          
-          const orderNumber = document.createElement('span');
-          orderNumber.textContent = `${index + 1}.`;
-          orderNumber.style.cssText = `
-            font-weight: bold;
-            margin-right: 10px;
-            width: 25px;
-            color: #ffe2a6;
-          `;
-          
-          const itemName = document.createElement('span');
-          itemName.textContent = text;
-          itemName.style.cssText = `
-            flex: 1;
-            color: #ffe2a6;
-          `;
-          
-          const itemType = document.createElement('span');
-          itemType.textContent = type === 'standard' ? t('standard') : t('custom');
-          itemType.style.cssText = `
-            font-size: 10px;
-            color: ${type === 'standard' ? '#FFB6C1' : '#90EE90'};
-            font-weight: bold;
-            margin-right: 10px;
-          `;
-          
-          itemInfo.appendChild(orderNumber);
-          itemInfo.appendChild(itemName);
-          itemInfo.appendChild(itemType);
-          
-          const buttonContainer = document.createElement('div');
-          buttonContainer.style.cssText = `
-            display: flex;
-            gap: 5px;
-          `;
-          
-          const upButton = document.createElement('button');
-          upButton.textContent = '↑';
-          upButton.style.cssText = `
-            background: #3a5a12;
-            color: #ffe2a6;
-            border: none;
-            border-radius: 3px;
-            width: 25px;
-            height: 25px;
-            cursor: pointer;
-            font-weight: bold;
-            ${index === 0 ? 'opacity: 0.3; cursor: not-allowed;' : ''}
-          `;
-          
-          const downButton = document.createElement('button');
-          downButton.textContent = '↓';
-          downButton.style.cssText = `
-            background: #3a5a12;
-            color: #ffe2a6;
-            border: none;
-            border-radius: 3px;
-            width: 25px;
-            height: 25px;
-            cursor: pointer;
-            font-weight: bold;
-            ${index === totalCount - 1 ? 'opacity: 0.3; cursor: not-allowed;' : ''}
-          `;
-          
-          if (index > 0) {
-            upButton.addEventListener('click', moveUpCallback);
-          }
-          
-          if (index < totalCount - 1) {
-            downButton.addEventListener('click', moveDownCallback);
-          }
-          
-          buttonContainer.appendChild(upButton);
-          buttonContainer.appendChild(downButton);
-          
-          sortItem.appendChild(itemInfo);
-          sortItem.appendChild(buttonContainer);
-          
-          return sortItem;
+    });
+
+    // Schließe Advanced Settings beim Klick auf Overlay (außerhalb der Settings UI)
+    advancedOverlay.addEventListener('click', (e) => {
+        if (e.target === advancedOverlay) {
+            closeAdvancedSettings();
         }
-        
-        updateSortableLists();
-        
-        standardSection.appendChild(standardTitle);
-        standardSection.appendChild(standardList);
-        customSection.appendChild(customTitle);
-        customSection.appendChild(customList);
-        
-        content.appendChild(standardSection);
-        content.appendChild(customSection);
+    });
+
+    // KORRIGIERT: Schließe nur Advanced Settings, zeige Hauptfenster wieder an
+    settingsUI.addEventListener('click', (e) => {
+        if (e.target.dataset.action === 'close-advanced') {
+            closeAdvancedSettings();
+        }
+    });
+    
+    console.log('[BiteFight] Advanced Settings opened with blur and scroll prevention');
+  }
+
+  // Neue Funktion zum korrekten Schließen der Advanced Settings
+  function closeAdvancedSettings() {
+      if (settingsWindow && settingsWindow.parentNode) {
+          settingsWindow.parentNode.removeChild(settingsWindow);
+          settingsWindow = null;
       }
       
-      return content;
-    }
+      // Zeige das Hauptfenster wieder an
+      if (uiContainer) {
+          uiContainer.style.display = 'flex'; // 'flex' weil es ein Overlay mit Flexbox ist
+      }
+      
+      console.log('[BiteFight] Advanced Settings closed, main UI restored');
+  }
   
-    function createMenuUI(menu) {
-      if (uiContainer || !menu) return;
+  // ===== TAB-FUNKTIONALITÄT =====
+  
+  function switchTab(tabNum, ui) {
+      activeTab = parseInt(tabNum);
       
-      uiContainer = document.createElement('div');
-      uiContainer.style.cssText = `
-        position: fixed;
-        top: 50%;
-        right: 10px;
-        transform: translateY(-50%);
-        width: 350px;
-        background: rgba(60, 30, 15, 0.95);
-        border: 2px solid #8b4513;
-        border-radius: 12px;
-        padding: 15px;
-        z-index: 9999;
-        font-family: 'Trajan Pro', 'Times New Roman', serif;
-        color: #ffe2a6;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-      `;
-      
-      // HEADER mit Titel, Flaggen-Auswahl und Settings-Button
-      const header = document.createElement('div');
-      header.style.cssText = `
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 15px;
-      `;
-      
-      const title = document.createElement('h3');
-      title.textContent = t('title');
-      title.style.cssText = `
-        margin: 0;
-        font-size: 1.4em;
-        color: #ffe2a6;
-        flex: 1;
-      `;
-      
-      const controlsContainer = document.createElement('div');
-      controlsContainer.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 5px;
-      `;
-      
-      // Flaggen-Auswahl hinzufügen
-      const languageFlags = createLanguageFlags();
-      
-      // Settings-Button hinzufügen
-      const settingsButton = createSettingsButton();
-      
-      controlsContainer.appendChild(languageFlags);
-      controlsContainer.appendChild(settingsButton);
-      
-      header.appendChild(title);
-      header.appendChild(controlsContainer);
-      uiContainer.appendChild(header);
-      
-      // Tab-Navigation
-      const tabContainer = document.createElement('div');
-      tabContainer.style.cssText = `
-        display: flex;
-        margin-bottom: 15px;
-        background: rgba(139, 69, 19, 0.3);
-        border-radius: 6px;
-        overflow: hidden;
-      `;
-      
-      const tabs = [
-        { id: 1, label: t('tabToggle') },
-        { id: 2, label: t('tabCustom') },
-        { id: 3, label: t('tabSorting') }
-      ];
-      
-      const tabButtons = {};
-      const tabContents = {};
-      
-      tabs.forEach(tab => {
-        const tabButton = document.createElement('button');
-        tabButton.textContent = tab.label;
-        tabButton.style.cssText = `
-          flex: 1;
-          padding: 10px;
-          border: none;
-          background: ${tab.id === activeTab ? '#3a5a12' : 'transparent'};
-          color: #ffe2a6;
-          cursor: pointer;
-          font-weight: bold;
-          transition: background 0.3s ease;
-          font-size: 11px;
-        `;
-        
-        tabButton.addEventListener('click', () => {
-          activeTab = tab.id;
-          // Tab-Buttons aktualisieren
-          Object.values(tabButtons).forEach(btn => btn.style.background = 'transparent');
-          tabButton.style.background = '#3a5a12';
-          
-          // Tab-Content aktualisieren
-          Object.values(tabContents).forEach(content => content.style.display = 'none');
-          tabContents[tab.id].style.display = 'block';
-        });
-        
-        tabButtons[tab.id] = tabButton;
-        tabContainer.appendChild(tabButton);
+      const tabBtns = ui.querySelectorAll('.bitefight-tab-btn');
+      tabBtns.forEach(btn => {
+          if (btn.dataset.tab === tabNum) {
+              btn.classList.add('active');
+          } else {
+              btn.classList.remove('active');
+          }
       });
       
-      // Tab-Contents erstellen
-      const contentContainer = document.createElement('div');
-      
-      tabs.forEach(tab => {
-        const tabContent = createTabContent(tab.id, menu);
-        tabContent.style.display = tab.id === activeTab ? 'block' : 'none';
-        tabContents[tab.id] = tabContent;
-        contentContainer.appendChild(tabContent);
+      const tabContents = ui.querySelectorAll('.tab-content');
+      tabContents.forEach(content => {
+          content.style.display = content.id === `tab${tabNum}` ? 'block' : 'none';
       });
       
-      // Control Buttons (nur für Tab 1)
-      const buttonContainer = document.createElement('div');
-      buttonContainer.style.cssText = `
-        display: flex;
-        gap: 10px;
-        justify-content: space-between;
-        margin-top: 15px;
-      `;
+      if (tabNum === '1') {
+          populateToggleTab(ui);
+      } else if (tabNum === '2') {
+          populateCustomTab(ui);
+      } else if (tabNum === '3') {
+          populateSortingTab(ui);
+      }
+  }
+  
+  function populateToggleTab(ui) {
+      const container = ui.querySelector('#menuToggleContainer');
+      if (!container) return;
+  
+      const menuItems = getMenuItems();
       
-      const allOnBtn = document.createElement('button');
-      allOnBtn.textContent = t('allOn');
-      allOnBtn.style.cssText = `
-        flex: 1;
-        padding: 8px;
-        background: #3a5a12;
-        color: #ffe2a6;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
+      let html = '';
+      menuItems.forEach(item => {
+          const isChecked = menuSettings[item.id] !== false;
+          html += `
+              <div class="bitefight-container" style="display: flex; justify-content: space-between; align-items: center; padding: 8px; margin: 5px 0; border-radius: 6px;">
+                  <span class="bitefight-text-primary">${item.text}</span>
+                  <label style="display: flex; align-items: center; gap: 8px;">
+                      <input type="checkbox" ${isChecked ? 'checked' : ''} data-menu-id="${item.id}" style="accent-color: #5a1a1a;">
+                  </label>
+              </div>
+          `;
+      });
       
-      const allOffBtn = document.createElement('button');
-      allOffBtn.textContent = t('allOff');
-      allOffBtn.style.cssText = `
-        flex: 1;
-        padding: 8px;
-        background: #8b1538;
-        color: #ffe2a6;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        font-weight: bold;
-      `;
+      container.innerHTML = html;
+      
+      const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+      checkboxes.forEach(checkbox => {
+          checkbox.addEventListener('change', (e) => {
+              const menuId = e.target.dataset.menuId;
+              menuSettings[menuId] = e.target.checked;
+              applyMenuSettings();
+              try {
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(menuSettings));
+                  console.log('[BiteFight] Menu settings saved:', menuSettings);
+              } catch (error) {
+                  console.error('[BiteFight] Error saving menu settings:', error);
+              }
+          });
+      });
+      
+      const allOnBtn = ui.querySelector('#allOnBtn');
+      const allOffBtn = ui.querySelector('#allOffBtn');
       
       allOnBtn.addEventListener('click', () => {
-        if (activeTab === 1) {
-          const checkboxes = contentContainer.querySelectorAll('input[type="checkbox"]');
-          const newSettings = {};
-          checkboxes.forEach((cb, index) => {
-            if (cb.id.startsWith('menu-item-')) {
+          checkboxes.forEach(cb => {
               cb.checked = true;
-              newSettings[cb.id] = true;
-            }
+              menuSettings[cb.dataset.menuId] = true;
           });
-          saveMenuSettings(newSettings);
-        }
+          applyMenuSettings();
+          try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(menuSettings));
+              console.log('[BiteFight] All menu items enabled');
+          } catch (error) {
+              console.error('[BiteFight] Error saving menu settings:', error);
+          }
       });
       
       allOffBtn.addEventListener('click', () => {
-        if (activeTab === 1) {
-          const checkboxes = contentContainer.querySelectorAll('input[type="checkbox"]');
-          const newSettings = {};
-          checkboxes.forEach((cb, index) => {
-            if (cb.id.startsWith('menu-item-')) {
+          checkboxes.forEach(cb => {
               cb.checked = false;
-              newSettings[cb.id] = false;
-            }
+              menuSettings[cb.dataset.menuId] = false;
           });
-          saveMenuSettings(newSettings);
-        }
+          applyMenuSettings();
+          try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(menuSettings));
+              console.log('[BiteFight] All menu items disabled');
+          } catch (error) {
+              console.error('[BiteFight] Error saving menu settings:', error);
+          }
+      });
+  }
+  
+  function populateCustomTab(ui) {
+      const container = ui.querySelector('#customButtonsList');
+      const toggleContainer = ui.querySelector('#customButtonToggleContainer');
+      
+      if (!container || !toggleContainer) return;
+  
+      updateCustomButtonsList(container);
+      updateCustomButtonToggleList(toggleContainer);
+      
+      const addBtn = ui.querySelector('#addCustomButton');
+      if (addBtn) {
+          addBtn.addEventListener('click', () => {
+              const name = ui.querySelector('#customButtonName').value.trim();
+              const url = ui.querySelector('#customButtonUrl').value.trim();
+              const newTab = ui.querySelector('#customButtonNewTab').checked;
+              const position = ui.querySelector('#customButtonPosition').value;
+              
+              if (!name || !url) {
+                  alert(t('pleaseEnterNameAndUrl'));
+                  return;
+              }
+              
+              const newButton = { 
+                  name, 
+                  url, 
+                  newTab,
+                  enabled: true,
+                  position: position
+              };
+              
+              if (position === 'between-standard') {
+                  const standardItems = getMenuItems();
+                  if (standardItems.length > 0) {
+                      const insertAfterIndex = prompt(
+                          `Nach welchem Standard-Menüpunkt soll "${name}" eingefügt werden?\n\n` +
+                          standardItems.map((item, index) => `${index}: ${item.text}`).join('\n') +
+                          '\n\nBitte Index eingeben (0-' + (standardItems.length - 1) + '):'
+                      );
+                      
+                      const index = parseInt(insertAfterIndex);
+                      if (!isNaN(index) && index >= 0 && index < standardItems.length) {
+                          newButton.insertAfterIndex = index;
+                      } else {
+                          newButton.position = 'after-time';
+                      }
+                  }
+              }
+              
+              customButtons.push(newButton);
+              saveCustomButtons();
+          });
+      }
+  }
+  
+  function updateCustomButtonToggleList(container) {
+      if (customButtons.length === 0) {
+          container.innerHTML = `<p style="text-align: center; margin: 10px 0;" class="bitefight-text-secondary">${t('noButtonsAvailable')}</p>`;
+          return;
+      }
+      
+      let html = '';
+      customButtons.forEach((button, index) => {
+          const isChecked = button.enabled !== false;
+          html += `
+              <div class="bitefight-container" style="display: flex; justify-content: space-between; align-items: center; padding: 8px; margin: 5px 0; border-radius: 6px;">
+                  <span class="bitefight-text-primary">${button.name}</span>
+                  <label style="display: flex; align-items: center; gap: 8px;">
+                      <input type="checkbox" ${isChecked ? 'checked' : ''} data-custom-button-index="${index}" style="accent-color: #5a1a1a;">
+                  </label>
+              </div>
+          `;
       });
       
-      // Update button container visibility based on active tab
-      function updateButtonContainerVisibility() {
-        buttonContainer.style.display = activeTab === 1 ? 'flex' : 'none';
+      container.innerHTML = html;
+      
+      const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+      checkboxes.forEach(checkbox => {
+          checkbox.addEventListener('change', (e) => {
+              const buttonIndex = parseInt(e.target.dataset.customButtonIndex);
+              customButtons[buttonIndex].enabled = e.target.checked;
+              
+              applyCustomButtonSettings();
+              
+              try {
+                  localStorage.setItem(CUSTOM_BUTTONS_KEY, JSON.stringify(customButtons));
+                  console.log('[BiteFight] Custom button settings saved:', customButtons);
+              } catch (error) {
+                  console.error('[BiteFight] Error saving custom button settings:', error);
+              }
+          });
+      });
+  }
+  
+  function populateSortingTab(ui) {
+      const standardContainer = ui.querySelector('#standardMenuSorting');
+      const customContainer = ui.querySelector('#customButtonSorting');
+      
+      if (standardContainer) {
+          updateStandardMenuSorting(standardContainer);
       }
       
-      // Add tab switch listeners to update button visibility
-      Object.values(tabButtons).forEach(btn => {
-        btn.addEventListener('click', updateButtonContainerVisibility);
+      if (customContainer) {
+          updateCustomButtonSorting(customContainer);
+      }
+      
+      const resetStandardBtn = ui.querySelector('#resetStandardOrder');
+      const resetCustomBtn = ui.querySelector('#resetCustomOrder');
+      
+      if (resetStandardBtn) {
+          resetStandardBtn.addEventListener('click', () => {
+              if (confirm(t('confirmStandardReset'))) {
+                  localStorage.removeItem(MENU_ORDER_KEY);
+                  menuOrder = [];
+                  showSaveNotification(t('standardOrderReset'));
+                  setTimeout(() => {
+                      window.location.reload();
+                  }, 800);
+              }
+          });
+      }
+      
+      if (resetCustomBtn) {
+          resetCustomBtn.addEventListener('click', () => {
+              if (confirm(t('confirmCustomReset'))) {
+                  localStorage.removeItem(CUSTOM_ORDER_KEY);
+                  customOrder = [];
+                  saveAndReload(t('customOrderReset'));
+              }
+          });
+      }
+  }
+  
+  function updateCustomButtonsList(container) {
+      if (customButtons.length === 0) {
+          container.innerHTML = `<p style="text-align: center; margin: 20px 0;" class="bitefight-text-secondary">${t('noButtonsAvailable')}</p>`;
+          return;
+      }
+      
+      let html = '';
+      customButtons.forEach((button, index) => {
+          html += `
+              <div class="bitefight-container" style="display: flex; justify-content: space-between; align-items: center; padding: 10px; margin: 5px 0; border-radius: 6px;">
+                  <div>
+                      <div style="font-weight: bold;" class="bitefight-text-primary">${button.name}</div>
+                      <div style="font-size: 11px;" class="bitefight-text-secondary">${button.url}</div>
+                      <div style="font-size: 10px;" class="bitefight-text-warning">${button.newTab ? t('newTab') : t('sameTab')}</div>
+                  </div>
+                  <div style="display: flex; gap: 5px;">
+                      <button data-action="edit-custom" data-index="${index}" class="bitefight-btn" style="padding: 4px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 10px;">${t('editButton')}</button>
+                      <button data-action="delete-custom" data-index="${index}" class="bitefight-btn-danger" style="padding: 4px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 10px;">${t('deleteButton')}</button>
+                  </div>
+              </div>
+          `;
       });
       
-      buttonContainer.appendChild(allOnBtn);
-      buttonContainer.appendChild(allOffBtn);
-      
-      uiContainer.appendChild(tabContainer);
-      uiContainer.appendChild(contentContainer);
-      uiContainer.appendChild(buttonContainer);
-      document.body.appendChild(uiContainer);
-      
-      // Initial visibility
-      const savedVisible = localStorage.getItem(UI_VISIBLE_KEY);
-      if (savedVisible === 'false') {
-        uiContainer.style.display = 'none';
-      }
-      
-      updateButtonContainerVisibility();
-      console.log('[BiteFight] Menu UI created with settings window and advanced configuration');
-    }
+      container.innerHTML = html;
   
-    // ===== UI-SICHTBARKEIT =====
-    function toggleUIVisibility() {
-      if (!uiContainer) return;
-      
-      const currentlyVisible = uiContainer.style.display !== 'none';
-      if (currentlyVisible) {
-        uiContainer.style.display = 'none';
-        localStorage.setItem(UI_VISIBLE_KEY, 'false');
-      } else {
-        uiContainer.style.display = 'block';
-        localStorage.setItem(UI_VISIBLE_KEY, 'true');
-      }
-      console.log('[BiteFight] UI visibility toggled:', !currentlyVisible);
-    }
-  
-    // ===== OPTIMIERTE HAUPTINITIALISIERUNG =====
-    function initAddon() {
-      console.log(`[BiteFight] Fast initialization started at ${Date.now() - pageLoadStartTime}ms`);
-      
-      // Nur auf gültigen BiteFight-Seiten initialisieren
-      if (!isValidBiteFightDomain() || !isValidBiteFightPath()) {
-        console.log('[BiteFight] Not a valid BiteFight page, skipping initialization');
-        return;
-      }
-      
-      const serverInfo = detectServerInfo();
-      console.log('[BiteFight] Server info:', serverInfo);
-      
-      // Overlay nur auf Hauptseiten anzeigen
-      if (window.location.pathname === '/profile/index' || window.location.pathname === '/') {
-        showOverlay();
-      }
-      
-      // Optimierte Menü-Erkennung
-      waitForMenu(menu => {
-        console.log(`[BiteFight] Menu setup completed in ${Date.now() - pageLoadStartTime}ms`);
-        
-        // Sofortige Menü-Anpassung ohne Verzögerung
-        addCustomLinksToMainMenu(menu);
-        applyMenuSettings(menu, menuSettings);
-        createMenuUI(menu);
-        
-        console.log('[BiteFight] Addon fully initialized with advanced settings window');
+      container.addEventListener('click', (e) => {
+          const action = e.target.dataset.action;
+          const index = parseInt(e.target.dataset.index);
+          
+          if (action === 'edit-custom') {
+              editCustomButton(index);
+          } else if (action === 'delete-custom') {
+              deleteCustomButton(index);
+          }
       });
-    }
+  }
   
-    // ===== EVENT LISTENERS =====
-    document.addEventListener('keydown', e => {
-      if (e.key === 'F2') {
-        e.preventDefault();
-        toggleUIVisibility();
+  // ===== KORRIGIERTE updateStandardMenuSorting FUNKTION MIT STABILEN IDs =====
+  function updateStandardMenuSorting(container) {
+      const menuItems = getMenuItems();
+      
+      console.log('[BiteFight] Standard menu items found:', menuItems.length);
+      
+      if (menuItems.length === 0) {
+          container.innerHTML = '<p style="text-align: center;" class="bitefight-text-secondary">Keine Standard-Menüpunkte gefunden</p>';
+          return;
       }
-    });
-  
-    // ===== SOFORTIGE INITIALISIERUNG =====
-    // Verhindere mehrfache Initialisierung
-    if (window.bitefightAddonInitialized) {
-      console.log('[BiteFight] Addon already initialized');
-      return;
-    }
-    window.bitefightAddonInitialized = true;
-  
-    // Starte sofort - keine Wartezeit mehr!
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initAddon);
-    } else {
-      // Sofortige Initialisierung ohne setTimeout
-      initAddon();
-    }
-  
-    // Zusätzliche Initialisierung für SPA-Navigation
-    let lastUrl = location.href;
-    const urlObserver = new MutationObserver(() => {
-      const url = location.href;
-      if (url !== lastUrl) {
-        lastUrl = url;
-        console.log('[BiteFight] Page changed to:', url);
-        
-        // Reset für neue Seite
-        buttonsInserted = false;
-        if (uiContainer) {
-          uiContainer.remove();
-          uiContainer = null;
-        }
-        
-        if (settingsWindow) {
-          settingsWindow.remove();
-          settingsWindow = null;
-        }
-        
-        // Neu initialisieren ohne Verzögerung
-        pageLoadStartTime = Date.now();
-        initAddon();
+      
+      // Sortiere basierend auf gespeicherter Reihenfolge
+      let sortedItems = [...menuItems];
+      if (menuOrder.length > 0) {
+          sortedItems = [];
+          menuOrder.forEach(orderId => {
+              const item = menuItems.find(mi => mi.id === orderId);
+              if (item) {
+                  sortedItems.push(item);
+              }
+          });
+          
+          // Füge neue Items hinzu, die nicht in der Reihenfolge sind
+          menuItems.forEach(item => {
+              if (!menuOrder.includes(item.id)) {
+                  sortedItems.push(item);
+              }
+          });
       }
-    });
+      
+      let html = '';
+      sortedItems.forEach((item, index) => {
+          html += `
+              <div class="bitefight-container" style="display: flex; justify-content: space-between; align-items: center; padding: 8px; margin: 4px 0; border-radius: 4px; font-size: 12px;" 
+                   data-item-id="${item.id}" data-item-text="${item.text}">
+                  <span class="bitefight-text-primary" title="${item.href}">[Standard] ${item.text}</span>
+                  <div>
+                      <button class="move-standard-btn bitefight-btn" data-index="${index}" data-direction="-1" ${index === 0 ? 'disabled' : ''} 
+                              style="padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 10px; margin: 0 2px; min-width: 25px;">↑</button>
+                      <button class="move-standard-btn bitefight-btn" data-index="${index}" data-direction="1" ${index === sortedItems.length - 1 ? 'disabled' : ''} 
+                              style="padding: 4px 8px; border-radius: 3px; cursor: pointer; font-size: 10px; margin: 0 2px; min-width: 25px;">↓</button>
+                  </div>
+              </div>
+          `;
+      });
+      
+      container.innerHTML = html;
+      
+      // KORRIGIERTE Event listeners mit verbesserter Debugging
+      const moveButtons = container.querySelectorAll('.move-standard-btn');
+      moveButtons.forEach(button => {
+          button.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              
+              const index = parseInt(e.target.dataset.index);
+              const direction = parseInt(e.target.dataset.direction);
+              
+              console.log(`[BiteFight] Moving item at index ${index} in direction ${direction}`);
+              console.log(`[BiteFight] Current sorted items:`, sortedItems.map(item => item.text));
+              
+              if (isNaN(index) || isNaN(direction)) {
+                  console.error('[BiteFight] Invalid index or direction:', index, direction);
+                  return;
+              }
+              
+              moveStandardItem(index, direction, sortedItems);
+          });
+      });
+      
+      window.currentStandardSort = sortedItems;
+  }
+  
+  function updateCustomButtonSorting(container) {
+      if (customButtons.length === 0) {
+          container.innerHTML = `<p style="text-align: center;" class="bitefight-text-secondary">${t('noCustomButtonsAvailable')}</p>`;
+          return;
+      }
+      
+      let sortedButtons = [...customButtons];
+      if (customOrder.length > 0) {
+          sortedButtons = [];
+          customOrder.forEach(orderId => {
+              const button = customButtons.find(btn => `custom-${btn.name.replace(/\s+/g, '-')}` === orderId);
+              if (button) {
+                  sortedButtons.push(button);
+              }
+          });
+          
+          customButtons.forEach(button => {
+              const buttonId = `custom-${button.name.replace(/\s+/g, '-')}`;
+              if (!customOrder.includes(buttonId)) {
+                  sortedButtons.push(button);
+              }
+          });
+      }
+      
+      let html = '';
+      sortedButtons.forEach((button, index) => {
+          html += `
+              <div class="bitefight-container" style="display: flex; justify-content: space-between; align-items: center; padding: 6px; margin: 2px 0; border-radius: 4px; font-size: 11px;">
+                  <span class="bitefight-text-warning">[Custom] ${button.name}</span>
+                  <div>
+                      <button data-action="move-custom" data-index="${index}" data-direction="-1" ${index === 0 ? 'disabled' : ''} class="bitefight-btn" style="padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 10px; margin: 0 1px;">↑</button>
+                      <button data-action="move-custom" data-index="${index}" data-direction="1" ${index === sortedButtons.length - 1 ? 'disabled' : ''} class="bitefight-btn" style="padding: 2px 6px; border-radius: 3px; cursor: pointer; font-size: 10px; margin: 0 1px;">↓</button>
+                  </div>
+              </div>
+          `;
+      });
+      
+      container.innerHTML = html;
+      
+      container.addEventListener('click', (e) => {
+          if (e.target.dataset.action === 'move-custom') {
+              const index = parseInt(e.target.dataset.index);
+              const direction = parseInt(e.target.dataset.direction);
+              moveCustomButton(index, direction, sortedButtons);
+          }
+      });
+      
+      window.currentCustomSort = sortedButtons;
+  }
+  
+  // ===== GLOBALE FUNKTIONEN FÜR BUTTON-VERWALTUNG =====
+  
+  function editCustomButton(index) {
+      const button = customButtons[index];
+      if (!button) return;
+      
+      const dialog = createEditDialog(button, index);
+      document.body.appendChild(dialog);
+  }
+  
+  function deleteCustomButton(index) {
+      const button = customButtons[index];
+      if (!button) return;
+      
+      if (confirm(t('confirmDelete', button.name))) {
+          customButtons.splice(index, 1);
+          saveCustomButtons();
+      }
+  }
+  
+  // ===== KORRIGIERTE moveStandardItem FUNKTION =====
+  function moveStandardItem(fromIndex, direction, items) {
+      if (!items || !Array.isArray(items)) {
+          console.error('[BiteFight] Invalid items array for moveStandardItem');
+          items = window.currentStandardSort || [];
+      }
+      
+      const toIndex = fromIndex + direction;
+      
+      console.log(`[BiteFight] Attempting to move item from ${fromIndex} to ${toIndex} (total items: ${items.length})`);
+      
+      if (fromIndex < 0 || fromIndex >= items.length || toIndex < 0 || toIndex >= items.length) {
+          console.warn('[BiteFight] Move operation out of bounds');
+          return;
+      }
+      
+      // Tausche die Items
+      [items[fromIndex], items[toIndex]] = [items[toIndex], items[fromIndex]];
+      
+      console.log('[BiteFight] Items swapped. New order:', items.map(item => item.text));
+      
+      // Erstelle neue Reihenfolge basierend auf stabilen IDs
+      const newOrder = items.map(item => item.id);
+      
+      console.log('[BiteFight] Saving new menu order:', newOrder);
+      
+      // Speichere und wende sofort an
+      try {
+          localStorage.setItem(MENU_ORDER_KEY, JSON.stringify(newOrder));
+          menuOrder = newOrder;
+          
+          // Wende die neue Reihenfolge sofort im DOM an
+          applyMenuOrder();
+          
+          // Aktualisiere die Sortier-UI
+          const container = document.querySelector('#standardMenuSorting');
+          if (container) {
+              updateStandardMenuSorting(container);
+          }
+          
+          showSaveNotification(t('menuOrderSaved'));
+          
+      } catch (error) {
+          console.error('[BiteFight] Error saving menu order:', error);
+      }
+  }
+  
+  function moveCustomButton(index, direction, buttons) {
+      if (!buttons) buttons = window.currentCustomSort;
+      if (!buttons) return;
+      
+      const newIndex = index + direction;
+      
+      if (newIndex < 0 || newIndex >= buttons.length) return;
+      
+      [buttons[index], buttons[newIndex]] = [buttons[newIndex], buttons[index]];
+      
+      const newOrder = buttons.map(button => `custom-${button.name.replace(/\s+/g, '-')}`);
+      saveCustomOrder(newOrder);
+  }
+  
+  function createEditDialog(button, index) {
+      const dialog = document.createElement('div');
+      dialog.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0,0,0,0.8);
+          z-index: 10002;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: 'Trajan Pro', 'Times New Roman', serif;
+      `;
+      
+      dialog.innerHTML = `
+          <div class="bitefight-ui" style="padding: 20px; min-width: 400px; border-radius: 12px;">
+              <h3 style="margin: 0 0 15px 0;" class="bitefight-text-primary">${t('editButtonTitle')}</h3>
+              <div style="margin-bottom: 10px;">
+                  <label style="display: block; margin-bottom: 5px;" class="bitefight-text-primary">${t('buttonNameLabel')}</label>
+                  <input type="text" id="editButtonName" value="${button.name}" class="bitefight-input" style="width: 100%; padding: 8px; border-radius: 4px; font-family: inherit; box-sizing: border-box;">
+              </div>
+              <div style="margin-bottom: 10px;">
+                  <label style="display: block; margin-bottom: 5px;" class="bitefight-text-primary">${t('urlLabel')}</label>
+                  <input type="text" id="editButtonUrl" value="${button.url}" class="bitefight-input" style="width: 100%; padding: 8px; border-radius: 4px; font-family: inherit; box-sizing: border-box;">
+              </div>
+              <div style="margin-bottom: 10px;">
+                  <label style="display: flex; align-items: center; gap: 8px;" class="bitefight-text-primary">
+                      <input type="checkbox" id="editButtonNewTab" ${button.newTab ? 'checked' : ''} style="accent-color: #5a1a1a;">
+                      ${t('openInNewTab')}
+                  </label>
+              </div>
+              <div style="margin-bottom: 15px;">
+                  <label style="display: block; margin-bottom: 5px;" class="bitefight-text-primary">Position:</label>
+                  <select id="editButtonPosition" class="bitefight-input" style="padding: 8px; border-radius: 4px; font-family: inherit; width: 100%; box-sizing: border-box;">
+                      <option value="after-time" ${button.position === 'after-time' ? 'selected' : ''}>Nach Uhrzeit (Standard)</option>
+                      <option value="between-standard" ${button.position === 'between-standard' ? 'selected' : ''}>Zwischen Standard-Menü</option>
+                  </select>
+              </div>
+              <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                  <button id="saveEditButton" class="bitefight-btn" style="padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: inherit;">${t('save')}</button>
+                  <button id="cancelEditButton" class="bitefight-btn-danger" style="padding: 8px 16px; border-radius: 6px; cursor: pointer; font-family: inherit;">${t('cancel')}</button>
+              </div>
+          </div>
+      `;
+      
+      const saveBtn = dialog.querySelector('#saveEditButton');
+      const cancelBtn = dialog.querySelector('#cancelEditButton');
+      
+      saveBtn.addEventListener('click', () => {
+          const name = dialog.querySelector('#editButtonName').value.trim();
+          const url = dialog.querySelector('#editButtonUrl').value.trim();
+          const newTab = dialog.querySelector('#editButtonNewTab').checked;
+          const position = dialog.querySelector('#editButtonPosition').value;
+          
+          if (!name || !url) {
+              alert(t('pleaseEnterNameAndUrl'));
+              return;
+          }
+          
+          const updatedButton = { 
+              ...customButtons[index], 
+              name, 
+              url, 
+              newTab, 
+              position 
+          };
+          
+          if (position === 'between-standard' && button.position !== 'between-standard') {
+              const standardItems = getMenuItems();
+              if (standardItems.length > 0) {
+                  const insertAfterIndex = prompt(
+                      `Nach welchem Standard-Menüpunkt soll "${name}" eingefügt werden?\n\n` +
+                      standardItems.map((item, index) => `${index}: ${item.text}`).join('\n') +
+                      '\n\nBitte Index eingeben (0-' + (standardItems.length - 1) + '):'
+                  );
+                  
+                  const index = parseInt(insertAfterIndex);
+                  if (!isNaN(index) && index >= 0 && index < standardItems.length) {
+                      updatedButton.insertAfterIndex = index;
+                  } else {
+                      updatedButton.position = 'after-time';
+                      delete updatedButton.insertAfterIndex;
+                  }
+              }
+          } else if (position === 'after-time') {
+              delete updatedButton.insertAfterIndex;
+          }
+          
+          customButtons[index] = updatedButton;
+          saveCustomButtons();
+          dialog.remove();
+      });
+      
+      cancelBtn.addEventListener('click', () => {
+          dialog.remove();
+      });
+      
+      return dialog;
+  }
+  
+  // ===== UI-VERWALTUNG =====
+  
+  // Globale Variable für Scroll-Position
+let lastScrollPosition = 0;
+
+function openUI() {
+    closeUI();
     
-    urlObserver.observe(document, {subtree: true, childList: true});
+    // Speichere aktuelle Scroll-Position
+    lastScrollPosition = window.pageYOffset || document.documentElement.scrollTop;
+    
+    // Füge CSS-Klasse hinzu für selektiven Blur-Effekt und Scroll-Sperrung
+    document.body.classList.add('bitefight-ui-open');
+    
+    // Zusätzliche Scroll-Sperrung für maximale Kompatibilität
+    document.body.style.top = `-${lastScrollPosition}px`;
+    document.documentElement.style.overflow = 'hidden';
+    document.documentElement.style.position = 'fixed';
+    document.documentElement.style.width = '100%';
+    document.documentElement.style.height = '100%';
+    
+    // Erstelle UI mit Overlay
+    uiContainer = createSettingsUI();
+    document.body.appendChild(uiContainer);
+    
+    switchTab(activeTab.toString(), uiContainer.querySelector('.bitefight-ui'));
+    
+    console.log('[BiteFight] UI opened with complete scroll prevention - menu remains visible');
+  }
+
+  function closeUI() {
+      if (uiContainer && uiContainer.parentNode) {
+          uiContainer.parentNode.removeChild(uiContainer);
+          uiContainer = null;
+      }
+      
+      if (settingsWindow && settingsWindow.parentNode) {
+          settingsWindow.parentNode.removeChild(settingsWindow);
+          settingsWindow = null;
+      }
+      
+      // Entferne CSS-Klasse um Blur-Effekt zu entfernen
+      document.body.classList.remove('bitefight-ui-open');
+      
+      // Stelle Hintergrund-Scrolling wieder her
+      document.body.style.top = '';
+      document.documentElement.style.overflow = '';
+      document.documentElement.style.position = '';
+      document.documentElement.style.width = '';
+      document.documentElement.style.height = '';
+      
+      // Stelle ursprüngliche Scroll-Position wieder her
+      window.scrollTo(0, lastScrollPosition);
+      
+      console.log('[BiteFight] UI closed and scroll restored to position:', lastScrollPosition);
+  }
   
-    console.log('[BiteFight] Addon script loaded with advanced settings configuration');
+  function toggleUI() {
+      if (uiContainer) {
+          closeUI();
+      } else {
+          openUI();
+      }
+  }
   
-  })();
+  // ===== KEYBOARD HANDLER =====
   
+  document.addEventListener('keydown', function(e) {
+      if (e.key === 'F2') {
+          e.preventDefault();
+          toggleUI();
+      } else if (e.key === 'Escape') {
+          if (uiContainer || settingsWindow) {
+              closeUI();
+          }
+      }
+  });
+  
+  // ===== DEBUG-FUNKTIONEN =====
+
+// ===== KORRIGIERTE DEBUG-FUNKTIONEN =====
+
+function debugMenuItems() {
+  console.log('=== MENU DEBUG ===');
+  const items = getMenuItems();
+  console.log('Current menu items:', items);
+  console.log('Current menu order:', menuOrder);
+  console.log('Menu in DOM:', document.querySelectorAll('#menuHead li'));
+  console.log('Custom buttons:', customButtons);
+  console.log('Custom order:', customOrder);
+  console.log('Advanced settings:', advancedSettings);
+  console.log('Menu settings:', menuSettings);
+  console.log('==================');
+}
+
+// ===== HAUPTINITIALISIERUNG =====
+
+function init() {
+  if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+      return;
+  }
+  
+  if (!isValidBiteFightDomain() || !isValidBiteFightPath()) {
+      console.log('[BiteFight] Not on a valid BiteFight page, script disabled');
+      return;
+  }
+  
+  console.log('[BiteFight] Script initializing...');
+  
+  initModalObserver();
+  
+  setTimeout(() => {
+      initializeMenu();
+      initMenuObserver();
+  }, 500);
+  
+  setTimeout(() => {
+      applyAdvancedSettings();
+      applyMenuSettings();
+      applyCustomButtonSettings();
+  }, 1000);
+}
+
+function initializeMenu() {
+  const menu = document.querySelector('#menuHead');
+  if (!menu) {
+      console.log('[BiteFight] Menu not found, retrying...');
+      setTimeout(initializeMenu, 1000);
+      return;
+  }
+  
+  applySortedCustomButtons(menu);
+  
+  setTimeout(() => {
+      applyMenuSettings();
+      applyCustomButtonSettings();
+      applyMenuOrder(); // NEU: Wende gespeicherte Menü-Reihenfolge an
+  }, 100);
+  
+  menu.style.opacity = '1';
+  
+  console.log('[BiteFight] Menu initialized successfully');
+}
+
+function isValidBiteFightDomain() {
+  return window.location.hostname.includes('bitefight.gameforge.com');
+}
+
+function isValidBiteFightPath() {
+  const currentPath = window.location.pathname;
+  const validPaths = [
+      /^\/profile($|\/.*)/, /^\/city($|\/.*)/, /^\/clan($|\/.*)/, /^\/hunt($|\/.*)/, 
+      /^\/messages($|\/.*)/, /^\/msg($|\/.*)/, /^\/report($|\/.*)/, /^\/graveyard($|\/.*)/, 
+      /^\/fight($|\/.*)/, /^\/admin($|\/.*)/, /^\/ranking($|\/.*)/, /^\/robbery($|\/.*)/, 
+      /^\/hideout($|\/.*)/, /^\/user($|\/.*)/, /^\/buddy($|\/.*)/, /^\/main($|\/.*)/, /^\/$/
+  ];
+  return validPaths.some(pattern => pattern.test(currentPath));
+}
+
+// ===== PERFORMANCE MONITORING =====
+
+function logPerformance() {
+  const loadTime = Date.now() - pageLoadStartTime;
+  console.log(`[BiteFight] Script loaded in ${loadTime}ms`);
+  
+  // Performance-Statistiken
+  const stats = {
+      menuItems: getMenuItems().length,
+      customButtons: customButtons.length,
+      memoryUsage: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1024 / 1024) + 'MB' : 'N/A',
+      loadTime: loadTime + 'ms'
+  };
+  
+  console.log('[BiteFight] Performance Stats:', stats);
+}
+
+// ===== ERROR HANDLING =====
+
+window.addEventListener('error', function(e) {
+  if (e.message.includes('BiteFight') || e.filename?.includes('content-script')) {
+      console.error('[BiteFight] Script Error:', {
+          message: e.message,
+          filename: e.filename,
+          line: e.lineno,
+          column: e.colno,
+          stack: e.error?.stack
+      });
+  }
+});
+
+// ===== CLEANUP UND FINALE INITIALISIERUNG =====
+
+init();
+
+// Performance-Logging nach Initialisierung
+setTimeout(logPerformance, 3000);
+
+window.addEventListener('beforeunload', function() {
+  if (domObserver) {
+      domObserver.disconnect();
+      console.log('[BiteFight] DOM observer disconnected');
+  }
+  if (modalObserver) {
+      modalObserver.disconnect();
+      console.log('[BiteFight] Modal observer disconnected');
+  }
+  
+  // Cleanup UI
+  closeUI();
+  
+  console.log('[BiteFight] Script cleanup completed');
+});
+
+// ===== GLOBALE SCRIPT-INFORMATION =====
+
+console.log(`
+🦇 ===== BITEFIGHT MENU CUSTOMIZER LOADED ===== 🦇
+Version: 3.0.0
+Features: ✅ Dark Theme ✅ Menu Sorting ✅ Custom Buttons ✅ Advanced Settings
+Debug: Add ?debug=true to URL for debug button
+Controls: Press F2 to open menu
+================================================
+`);
+
+// ===== SCRIPT-ENDE =====
+
+})();
